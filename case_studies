@@ -1,0 +1,35 @@
+Findings on the case projects;
+I was able to install and compare the workings of our case-study systems: QuestionWell, Alexander Wendt's Exam Question Generator, QuizGennie and  Educhain.
+
+QuestionWell;
+-Already hosted app, no source code available. Limited trials for users.
+-Can help us understand some user interfaces and pricing policy (at a later stage)
+
+Exam Question Generator;
+-Generates different question types and provides explanations based on the provided prompt. 
+-Uses RAG to retrieve context and apply it to generate user-specific output.
+-Provides no control to the user over the generated output (basically a one prompt-one output system)
+-Uses Python, Tesseract, LangChain, OpenAI libraries (API Keys).
+Source code is available and configurable.
+
+QuizzGenie;
+-Generates only quizzes 
+-Uses streamlit, google gemini, LangChain.
+-Requires Google Cloud Configuration and API, including billing, which makes it complicated.
+-Source code controlled by the author.
+
+Educhain;
+-Generates different types of questions from files, videos, and images, including visual questions.
+-Includes additional pedagogical approaches (Bloom's Taxonomy, Socratic Questioning, Project-Based Learning, Flipped Classroom, Inquiry-Based Learning, Constructivist, Gamification, Peer Learning).
+- Customizable prompt templates.
+- Supports various LLMs
+- Export questions to different document formats.
+-Additionally, creates Lesson Plans.
+
+Recommendations;
+The proposed SASA System should be able to combine all the core features of Alexander Wendt's Exam Question Generator (RAG) and Educhain (Diverse features), while offering robust control over generated output. 
+
+Next step;
+Creating an integrated, separate SASA system combining features of Alexander Wendt's Exam Question Generator and Educhain.
+
+
