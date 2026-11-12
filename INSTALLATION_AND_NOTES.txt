@@ -1,0 +1,50 @@
+SASA maintenance upgrade — technical package v0.5.3
+Official SASA product version remains v0.1.0.
+
+WHAT THIS UPDATE CHANGES
+1. Curriculum Manager: adds a Registered curriculum documents panel with a delete action and confirmation.
+2. Backend: adds DELETE /api/v1/curriculum/documents/{document_id}.
+3. Safety: deletion is allowed only when no curriculum nodes, topic records, or generated questions refer to the document. The source file is removed only after the database record is successfully deleted. If the document is still referenced, the API returns HTTP 409 and preserves it. The reference check covers imported curriculum entries, topic records carrying the source title, and generated questions whose curriculum reference includes the title.
+4. Headers: restores the shared SASA header styling on the Curriculum Content Manager and Assessment Engine pages.
+5. Existing Prompt Studio readability and recent-conversation deletion files are not modified.
+
+IMPORTANT DELETION BEHAVIOUR
+- Documents with linked curriculum entries or topic records are protected; their Delete buttons are disabled.
+- Remove/reassign the linked curriculum references first, then retry.
+- This action does not cascade-delete entries, outcomes, topics, generated questions, exams, or review history.
+- This update does not modify the database schema and does not require a migration.
+
+INSTALLATION (Windows PowerShell)
+1. Stop the running backend and frontend terminals with Ctrl+C.
+2. Back up the database and the three files being replaced.
+3. Extract this ZIP into the SASA project root: C:\SASA-EduAssess
+4. Start the backend and frontend using your existing commands.
+
+Suggested backup commands (run before extracting):
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backup = "C:\SASA-EduAssess\backups\v0.5.3-$stamp"
+New-Item -ItemType Directory -Force -Path $backup | Out-Null
+Copy-Item "C:\SASA-EduAssess\backend\sasa_eduassess.db" $backup
+Copy-Item "C:\SASA-EduAssess\backend\app\routers\curriculum.py" $backup
+Copy-Item "C:\SASA-EduAssess\frontend\src\app\curriculum\page.tsx" $backup
+Copy-Item "C:\SASA-EduAssess\frontend\src\app\globals.css" $backup
+
+Then extract:
+Expand-Archive -LiteralPath "$env:USERPROFILE\Downloads\SASA_v0_5_3_Curriculum_Document_Management_Header_Restoration.zip" -DestinationPath "C:\SASA-EduAssess" -Force
+
+Restart in separate PowerShell terminals:
+cd C:\SASA-EduAssess\backend
+.\venv\Scripts\Activate.ps1
+python -m uvicorn app.main:app --reload
+
+cd C:\SASA-EduAssess\frontend
+npm run dev
+
+TESTS PERFORMED
+- Backend router imports and Python syntax compilation passed.
+- Delete operation test passed for an unused document.
+- Delete operation returned HTTP 409 and preserved a document when a curriculum entry referenced it.
+- Delete operation returned HTTP 409 and preserved a document when a topic record referenced its source title.
+- Delete operation returned HTTP 409 and preserved a document when a generated question referenced its title.
+- Curriculum Manager TSX transpilation reported zero syntax diagnostics.
+- A full Next.js production build was not run because this source archive does not include node_modules.
