@@ -1,0 +1,15 @@
+services:
+  database:
+    image: pgvector/pgvector:pg17
+    container_name: sasa_eduassess_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sasa_eduassess
+      POSTGRES_USER: sasa_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - sasa_postgres_data:/var/lib/postgresql/data
+volumes:
+  sasa_postgres_data:
