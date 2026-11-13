@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.config import settings
+from app.services.ai_client import get_ai_client, get_ai_model, get_ai_provider, is_ai_configured
 from app.database import get_db
 from app.models import (
     Grade, Subject, CurriculumNode, CurriculumDocument, LearningOutcome,
@@ -27,13 +27,6 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
 
 class SessionCreate(BaseModel):
     title: str = "New prompt session"
-    grade_code: str = ""
-    subject_name: str = ""
-    topic_name: str = ""
-    curriculum_node_id: str | None = None
-
-
-class SessionContextUpdate(BaseModel):
     grade_code: str = ""
     subject_name: str = ""
     topic_name: str = ""
@@ -281,71 +274,12 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
             raise HTTPException(422, "The selected curriculum entry does not match the class.")
         if payload.subject_name and not _same_subject(payload.subject_name, subject.name):
             raise HTTPException(422, "The selected curriculum entry does not match the subject.")
-    # A selected verified curriculum node is the authoritative source for its
-    # class, subject and topic. Do not persist blank/stale form values.
-    grade_code = grade.code if node else payload.grade_code.strip().upper()
-    subject_name = subject.name if node else payload.subject_name.strip()
-    topic_name = node.title if node else payload.topic_name.strip()
     session = PromptSession(
         title=(payload.title.strip() or "New prompt session")[:255],
-        grade_code=grade_code, subject_name=subject_name,
-        topic_name=topic_name, curriculum_node_id=payload.curriculum_node_id,
+        grade_code=payload.grade_code.upper(), subject_name=payload.subject_name.strip(),
+        topic_name=payload.topic_name.strip(), curriculum_node_id=payload.curriculum_node_id,
     )
     db.add(session)
-    db.commit()
-    db.refresh(session)
-    return _session_dict(session)
-
-
-@router.patch("/sessions/{session_id}/context")
-def update_session_context(session_id: str, payload: SessionContextUpdate, db: Session = Depends(get_db)):
-    """Persist the current class/subject selection and repair pending draft metadata."""
-    session = db.get(PromptSession, session_id)
-    if not session:
-        raise HTTPException(404, "Prompt session not found.")
-
-    node = None
-    if payload.curriculum_node_id:
-        node = db.get(CurriculumNode, payload.curriculum_node_id)
-        if not node or node.verification_status != "verified":
-            raise HTTPException(422, "The selected curriculum entry must be verified.")
-        grade = db.get(Grade, node.grade_id)
-        subject = db.get(Subject, node.subject_id)
-        source_document = db.get(CurriculumDocument, node.document_id)
-        if not source_document or source_document.verification_status != "verified":
-            raise HTTPException(422, "The selected curriculum source document must be verified.")
-    else:
-        grade = db.scalar(select(Grade).where(Grade.code == payload.grade_code.strip().upper()))
-        subject = next((candidate for candidate in db.scalars(select(Subject)).all()
-                        if _same_subject(candidate.name, payload.subject_name)), None)
-
-    if not grade or not subject:
-        raise HTTPException(422, "Select a valid class and subject from the catalogue before generating questions.")
-    if node and payload.grade_code and payload.grade_code.strip().upper() != grade.code:
-        raise HTTPException(422, "The selected curriculum entry does not match the class.")
-    if node and payload.subject_name and not _same_subject(payload.subject_name, subject.name):
-        raise HTTPException(422, "The selected curriculum entry does not match the subject.")
-
-    session.grade_code = grade.code
-    session.subject_name = subject.name
-    session.topic_name = node.title if node else payload.topic_name.strip()
-    session.curriculum_node_id = node.id if node else None
-    session.updated_at = datetime.now(timezone.utc)
-
-    # Existing drafts from older sessions may have been saved without context.
-    pending = db.scalars(select(PromptDraft).where(
-        PromptDraft.session_id == session.id, PromptDraft.status == "draft"
-    )).all()
-    for draft in pending:
-        if not draft.grade_code:
-            draft.grade_code = grade.code
-        if not draft.subject_name:
-            draft.subject_name = subject.name
-        if not draft.topic_name:
-            draft.topic_name = session.topic_name
-        if not draft.curriculum_node_id and node:
-            draft.curriculum_node_id = node.id
-
     db.commit()
     db.refresh(session)
     return _session_dict(session)
@@ -386,8 +320,10 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
     ).where(PromptSession.id == session_id))
     if not session:
         raise HTTPException(404, "Prompt session not found.")
-    if not settings.openai_api_key:
-        raise HTTPException(503, "Prompt Studio requires an OpenAI API key. Configure OPENAI_API_KEY in backend/.env and restart the backend.")
+    if not is_ai_configured():
+        provider = get_ai_provider()
+        key_name = "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
+        raise HTTPException(503, f"Prompt Studio requires the selected AI provider. Configure {key_name} in backend/.env and restart the backend.")
     node = db.get(CurriculumNode, session.curriculum_node_id) if session.curriculum_node_id else None
     curriculum_context = ""
     verified_outcome_texts = []
@@ -445,10 +381,10 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
         "Never claim AI drafts are official NCDC questions."
     )
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=settings.openai_api_key)
+        provider = get_ai_provider()
+        client = get_ai_client()
         response = client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_ai_model(),
             messages=[{"role": "system", "content": system}, *history, {"role": "user", "content": user_content}],
             response_format={"type": "json_object"}, temperature=0.25,
         )
@@ -497,7 +433,8 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
     db.commit()
     for draft in saved_drafts:
         db.refresh(draft)
-    return {"answer": answer, "sources": assistant_message.sources_json and json.loads(assistant_message.sources_json),
+    return {"answer": answer, "provider": provider,
+            "sources": assistant_message.sources_json and json.loads(assistant_message.sources_json),
             "drafts": [_draft_dict(d) for d in saved_drafts]}
 
 
@@ -515,24 +452,11 @@ def send_drafts_to_bank(session_id: str, payload: SendDrafts, db: Session = Depe
     for draft in drafts:
         if draft.status == "added_to_bank":
             continue
-        grade_code = (draft.grade_code or session.grade_code or "").strip().upper()
-        subject_value = (draft.subject_name or session.subject_name or "").strip()
-        # If a draft is tied to a verified curriculum node, its linked catalogue
-        # records are authoritative and repair any missing draft metadata.
-        linked_node = db.get(CurriculumNode, draft.curriculum_node_id) if draft.curriculum_node_id else None
-        if linked_node:
-            grade = db.get(Grade, linked_node.grade_id)
-            subject = db.get(Subject, linked_node.subject_id)
-        else:
-            grade = db.scalar(select(Grade).where(Grade.code == grade_code))
-            subject = db.scalar(select(Subject).where(Subject.name == subject_value))
-            if not subject:
-                subject = next((candidate for candidate in db.scalars(select(Subject)).all()
-                                if _same_subject(candidate.name, subject_value)), None)
-        if grade and not draft.grade_code:
-            draft.grade_code = grade.code
-        if subject and not draft.subject_name:
-            draft.subject_name = subject.name
+        grade = db.scalar(select(Grade).where(Grade.code == draft.grade_code.upper()))
+        subject = db.scalar(select(Subject).where(Subject.name == draft.subject_name))
+        if not subject:
+            subject = next((candidate for candidate in db.scalars(select(Subject)).all()
+                            if _same_subject(candidate.name, draft.subject_name)), None)
         if not grade or not subject:
             raise HTTPException(422, f"Class or subject not found for draft {draft.id}. Set these in the session before generating.")
         q = Question(
@@ -541,7 +465,7 @@ def send_drafts_to_bank(session_id: str, payload: SendDrafts, db: Session = Depe
             difficulty=draft.difficulty, marks=draft.marks, expected_answer=draft.expected_answer,
             marking_guide=draft.marking_guide, curriculum_reference="AI Prompt Studio; retrieved sources: " +
                 "; ".join(s.get("title", "") for s in json.loads(draft.source_references_json or "[]")),
-            source="openai_rag", moderation_category="Curriculum" if draft.curriculum_node_id else "Supplementary",
+            source="ai_rag", moderation_category="Curriculum" if draft.curriculum_node_id else "Supplementary",
             approval_status="approved", bloom_level=draft.bloom_level, learning_outcome=draft.learning_outcome,
             options_json=draft.options_json, explanation=draft.explanation,
         )
