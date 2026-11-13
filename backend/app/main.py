@@ -64,7 +64,7 @@ def _subject_ids(db: Session, subject) -> list[str]:
 Base.metadata.create_all(bind=engine)
 migrate_schema()
 
-app = FastAPI(title=settings.app_name, description="SASA teaching, curriculum intelligence and assessment API", version="0.3.1")
+app = FastAPI(title=settings.app_name, description="SASA teaching, curriculum intelligence and assessment API", version="0.3.2")
 app.include_router(curriculum_router)
 app.include_router(prompt_studio_router)
 app.add_middleware(CORSMiddleware, allow_origins=list({settings.frontend_origin, "http://127.0.0.1:3000", "http://localhost:3000"}),
@@ -94,11 +94,11 @@ def serialize_exam(exam):
 
 @app.get("/")
 def root():
-    return {"system": settings.app_name, "version": "0.3.1", "docs": "/docs"}
+    return {"system": settings.app_name, "version": "0.3.2", "docs": "/docs"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "environment": settings.app_env, "version": "0.3.1"}
+    return {"status": "healthy", "environment": settings.app_env, "version": "0.3.2"}
 
 @app.get("/api/v1/curriculum/grades")
 def grades(db: Session = Depends(get_db)):
