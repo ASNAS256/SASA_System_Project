@@ -33,6 +33,13 @@ class SessionCreate(BaseModel):
     curriculum_node_id: str | None = None
 
 
+class SessionContextUpdate(BaseModel):
+    grade_code: str = ""
+    subject_name: str = ""
+    topic_name: str = ""
+    curriculum_node_id: str | None = None
+
+
 class MessageCreate(BaseModel):
     prompt: str = Field(min_length=2, max_length=12000)
     mode: str = Field(default="ask", pattern="^(ask|questions)$")
@@ -274,12 +281,71 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
             raise HTTPException(422, "The selected curriculum entry does not match the class.")
         if payload.subject_name and not _same_subject(payload.subject_name, subject.name):
             raise HTTPException(422, "The selected curriculum entry does not match the subject.")
+    # A selected verified curriculum node is the authoritative source for its
+    # class, subject and topic. Do not persist blank/stale form values.
+    grade_code = grade.code if node else payload.grade_code.strip().upper()
+    subject_name = subject.name if node else payload.subject_name.strip()
+    topic_name = node.title if node else payload.topic_name.strip()
     session = PromptSession(
         title=(payload.title.strip() or "New prompt session")[:255],
-        grade_code=payload.grade_code.upper(), subject_name=payload.subject_name.strip(),
-        topic_name=payload.topic_name.strip(), curriculum_node_id=payload.curriculum_node_id,
+        grade_code=grade_code, subject_name=subject_name,
+        topic_name=topic_name, curriculum_node_id=payload.curriculum_node_id,
     )
     db.add(session)
+    db.commit()
+    db.refresh(session)
+    return _session_dict(session)
+
+
+@router.patch("/sessions/{session_id}/context")
+def update_session_context(session_id: str, payload: SessionContextUpdate, db: Session = Depends(get_db)):
+    """Persist the current class/subject selection and repair pending draft metadata."""
+    session = db.get(PromptSession, session_id)
+    if not session:
+        raise HTTPException(404, "Prompt session not found.")
+
+    node = None
+    if payload.curriculum_node_id:
+        node = db.get(CurriculumNode, payload.curriculum_node_id)
+        if not node or node.verification_status != "verified":
+            raise HTTPException(422, "The selected curriculum entry must be verified.")
+        grade = db.get(Grade, node.grade_id)
+        subject = db.get(Subject, node.subject_id)
+        source_document = db.get(CurriculumDocument, node.document_id)
+        if not source_document or source_document.verification_status != "verified":
+            raise HTTPException(422, "The selected curriculum source document must be verified.")
+    else:
+        grade = db.scalar(select(Grade).where(Grade.code == payload.grade_code.strip().upper()))
+        subject = next((candidate for candidate in db.scalars(select(Subject)).all()
+                        if _same_subject(candidate.name, payload.subject_name)), None)
+
+    if not grade or not subject:
+        raise HTTPException(422, "Select a valid class and subject from the catalogue before generating questions.")
+    if node and payload.grade_code and payload.grade_code.strip().upper() != grade.code:
+        raise HTTPException(422, "The selected curriculum entry does not match the class.")
+    if node and payload.subject_name and not _same_subject(payload.subject_name, subject.name):
+        raise HTTPException(422, "The selected curriculum entry does not match the subject.")
+
+    session.grade_code = grade.code
+    session.subject_name = subject.name
+    session.topic_name = node.title if node else payload.topic_name.strip()
+    session.curriculum_node_id = node.id if node else None
+    session.updated_at = datetime.now(timezone.utc)
+
+    # Existing drafts from older sessions may have been saved without context.
+    pending = db.scalars(select(PromptDraft).where(
+        PromptDraft.session_id == session.id, PromptDraft.status == "draft"
+    )).all()
+    for draft in pending:
+        if not draft.grade_code:
+            draft.grade_code = grade.code
+        if not draft.subject_name:
+            draft.subject_name = subject.name
+        if not draft.topic_name:
+            draft.topic_name = session.topic_name
+        if not draft.curriculum_node_id and node:
+            draft.curriculum_node_id = node.id
+
     db.commit()
     db.refresh(session)
     return _session_dict(session)
@@ -449,11 +515,24 @@ def send_drafts_to_bank(session_id: str, payload: SendDrafts, db: Session = Depe
     for draft in drafts:
         if draft.status == "added_to_bank":
             continue
-        grade = db.scalar(select(Grade).where(Grade.code == draft.grade_code.upper()))
-        subject = db.scalar(select(Subject).where(Subject.name == draft.subject_name))
-        if not subject:
-            subject = next((candidate for candidate in db.scalars(select(Subject)).all()
-                            if _same_subject(candidate.name, draft.subject_name)), None)
+        grade_code = (draft.grade_code or session.grade_code or "").strip().upper()
+        subject_value = (draft.subject_name or session.subject_name or "").strip()
+        # If a draft is tied to a verified curriculum node, its linked catalogue
+        # records are authoritative and repair any missing draft metadata.
+        linked_node = db.get(CurriculumNode, draft.curriculum_node_id) if draft.curriculum_node_id else None
+        if linked_node:
+            grade = db.get(Grade, linked_node.grade_id)
+            subject = db.get(Subject, linked_node.subject_id)
+        else:
+            grade = db.scalar(select(Grade).where(Grade.code == grade_code))
+            subject = db.scalar(select(Subject).where(Subject.name == subject_value))
+            if not subject:
+                subject = next((candidate for candidate in db.scalars(select(Subject)).all()
+                                if _same_subject(candidate.name, subject_value)), None)
+        if grade and not draft.grade_code:
+            draft.grade_code = grade.code
+        if subject and not draft.subject_name:
+            draft.subject_name = subject.name
         if not grade or not subject:
             raise HTTPException(422, f"Class or subject not found for draft {draft.id}. Set these in the session before generating.")
         q = Question(
