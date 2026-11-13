@@ -151,3 +151,45 @@ button:hover:not(:disabled){filter:brightness(.97);transform:translateY(-1px)}bu
  .message-content{font-size:14px}
  .composer textarea{font-size:14px}
 }
+
+
+/* =========================================
+   SASA workspace header restoration
+   ========================================= */
+.sasa-header{padding:0;color:#fff;background:linear-gradient(118deg,#102b46 0%,#12445f 55%,#176b87 100%);border-bottom:1px solid rgba(255,255,255,.12);}
+.sasa-header-content{width: min(100% - 40px, 1200px);min-height: 110px;margin: 0 auto;padding: 20px 0;display: flex;flex-direction: row;align-items: center;justify-content: space-between;gap: 30px;text-align: left;}
+/* Left side: SASA brand and tagline */
+.sasa-header-brand {display: flex;flex-direction: column;align-items: flex-start;gap: 8px;flex-shrink: 0;}
+.sasa-brand{display: inline-flex;align-items: center;justify-content: flex-start;gap: 10px;color: #fff;font-size: 27px;line-height: 1;font-weight: 850;letter-spacing: .12em;text-decoration: none;}
+.sasa-brand:hover{color:#fff;text-decoration:none}
+.sasa-brand-mark{width:42px;height:42px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.3);border-radius:13px;background:linear-gradient(135deg,#48b4a7,#176b87);box-shadow:0 5px 16px rgba(0,0,0,.16);color:#fff;font-size:24px;font-weight:900;letter-spacing:0;}
+.sasa-tagline{margin: 0;color: #d7eaf2;font-size: 14px;font-weight: 500;letter-spacing: .025em;}
+.sasa-workspace-label{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border:1px solid rgba(196,229,239,.27);border-radius:999px;background:rgba(255,255,255,.09);color:#d5edf3;font-size:10px;font-weight:800;letter-spacing:.15em;}
+.sasa-curriculum-description{max-width:680px;margin:2px auto 3px;color:#e1edf2;font-size:13px;line-height:1.55;}
+.sasa-navigation{display: flex;align-items: center;justify-content: flex-end;flex-wrap: wrap;gap: 12px;margin: 0;}
+.sasa-navigation .sasa-nav-link{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:40px;padding:9px 15px;border:1px solid rgba(222,243,248,.3);border-radius:999px;background:rgba(255,255,255,.09);color:#f1fafc;font-size:12px;font-weight:750;text-decoration:none;transition:background .15s,border-color .15s,transform .15s;}
+.sasa-navigation .sasa-nav-link:hover{border-color:rgba(255,255,255,.65);background:rgba(255,255,255,.17);color:#fff;text-decoration:none;transform:translateY(-1px);}
+.sasa-nav-icon,.sasa-nav-arrow{color:#9edbd7;font-size:15px;line-height:1;}
+.sasa-version{margin-top:3px;color:#bcd4df;font-size:10px;font-weight:700;letter-spacing:.09em;}
+.curriculum-navigation .curriculum-back-link{background:#fff;border-color:#fff;color:#17465d;}
+.curriculum-navigation .curriculum-back-link:hover{background:#eaf5f7;border-color:#eaf5f7;color:#12364c;}
+.curriculum-back-link .sasa-nav-arrow{color:#176b87}
+.document-management-list{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.document-management-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fbfdfe;}
+.document-management-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.document-management-info b{font-size:14px;overflow-wrap:anywhere}
+.document-management-info span{font-size:12px;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}
+.document-delete-button{flex:0 0 auto;margin:0}
+@media(max-width:760px){.sasa-header-content {width: calc(100% - 28px);min-height: auto;padding: 18px 0;flex-direction: column;align-items: flex-start;gap: 18px;}
+  .sasa-header-brand {align-items: flex-start;}
+ .sasa-brand{font-size:24px}
+ .sasa-brand-mark{width:38px;height:38px;font-size:22px}
+ .sasa-tagline{font-size:12px}
+ .sasa-workspace-label{font-size:9px;letter-spacing:.1em}
+ .sasa-curriculum-description{font-size:12px}
+ .sasa-navigation {justify-content: flex-start;gap: 8px;width: 100%;}
+ .sasa-navigation .sasa-nav-link{min-height:38px;padding:8px 12px;font-size:11px}
+ .document-management-row{align-items:flex-start}
+ .document-delete-button{font-size:12px;padding:9px 11px}
+}
+
