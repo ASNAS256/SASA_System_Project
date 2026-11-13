@@ -1,6 +1,6 @@
 import json
 from pydantic import BaseModel, Field
-from app.core.config import settings
+from app.services.ai_client import get_ai_client, get_ai_model, get_ai_provider, is_ai_configured
 
 class QuestionDraft(BaseModel):
     question_text: str = Field(min_length=5)
@@ -36,10 +36,10 @@ def demo_questions(topic, grade, count, difficulty, qtype, context, bloom, outco
     return rows
 
 def generate_questions(topic, grade, count, difficulty, qtype, context, curriculum_reference, bloom="mixed", outcome="", subject=""):
-    if not settings.openai_api_key:
+    if not is_ai_configured():
         return demo_questions(topic, grade, count, difficulty, qtype, context, bloom, outcome, subject), "demo_ai"
-    from openai import OpenAI
-    client = OpenAI(api_key=settings.openai_api_key)
+    provider = get_ai_provider()
+    client = get_ai_client()
     system_prompt = (
         "You assist Ugandan teachers. Generate draft assessment items, never claim they are official. "
         "Use only supplied curriculum facts. Never invent or attribute an official learning outcome. "
@@ -61,7 +61,7 @@ def generate_questions(topic, grade, count, difficulty, qtype, context, curricul
                "question_type": qtype, "bloom_level": bloom, "learning_outcome": outcome,
                "context": context, "curriculum_reference": curriculum_reference}
     response = client.chat.completions.create(
-        model=settings.openai_model,
+        model=get_ai_model(),
         messages=[{"role":"system","content":system_prompt},{"role":"user","content":json.dumps(payload)}],
         response_format={"type":"json_object"}, temperature=0.25
     )
@@ -75,4 +75,4 @@ def generate_questions(topic, grade, count, difficulty, qtype, context, curricul
     validated = [QuestionDraft.model_validate(item).model_dump() for item in raw[:count]]
     if len(validated) != count:
         raise ValueError(f"AI returned {len(validated)} questions; {count} were requested. Please retry.")
-    return validated, "openai"
+    return validated, provider
