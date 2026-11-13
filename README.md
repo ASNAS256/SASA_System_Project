@@ -1,8 +1,8 @@
-# SASA EduAssess Uganda — Version 0.3.1
+# SASA EduAssess Uganda — Version 0.1
 
 Milestone 0.3 adds a curriculum source registry, document text extraction, structured CSV curriculum import, review/verification workflow, and a dedicated Curriculum Content Manager page. It builds on the v0.2 question-generation and examination-paper features.
 
-> **v0.3.1 cloud-preparation notice:** This package removes the embedded API credential and adds a Render deployment scaffold. It is not approved for public deployment yet. The application still needs registration/login, role-based authorization, per-user data isolation and persistent object storage. See [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before deploying.
+> **v0.3.2 production-fix notice:** This package removes the embedded API credential and adds a Render deployment scaffold. It is not approved for public deployment yet. The application still needs registration/login, role-based authorization, per-user data isolation and persistent object storage. See [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before deploying.
 
 ## Important: what v0.3 does and does not mean
 
@@ -43,7 +43,7 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-The schema additions are additive. `Base.metadata.create_all` creates the new curriculum tables without deleting existing v0.2 questions, examinations or curriculum topics. The seed command remains safe to rerun.
+The schema additions are additive. `Base.metadata.create_all` creates the new curriculum tables without deleting existing v0.2 questions, examinations or curriculum topics. The seed command remains safe to rerun. On Render, use `python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT` as the start command so the class and subject catalogue is initialized before the API starts.
 
 In a second PowerShell window:
 
