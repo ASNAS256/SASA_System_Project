@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useState} from "react";
 const API=process.env.NEXT_PUBLIC_API_URL||"http://127.0.0.1:8000";
-type Doc={id:string;title:string;issuing_authority:string;document_type:string;education_level:string;curriculum_version:string;publication_year:string;source_url:string;original_filename:string;sha256:string;extraction_status:string;verification_status:string;created_at:string|null;extracted_characters:number};
+type Doc={id:string;title:string;issuing_authority:string;document_type:string;education_level:string;curriculum_version:string;publication_year:string;source_url:string;original_filename:string;sha256:string;extraction_status:string;verification_status:string;created_at:string|null;extracted_characters:number;linked_entries:number;linked_topics:number;linked_questions:number};
 type Outcome={id:string;outcome_text:string;competency:string;verification_status:string;page_reference:string};
 type Entry={id:string;grade_code:string;subject_name:string;document_id:string;document_title:string;parent_title:string|null;entry_type:string;title:string;description:string;page_reference:string;source_excerpt:string;verification_status:string;created_at:string|null;learning_outcomes:Outcome[]};
 type Summary={documents:number;documents_verified:number;entries:number;entries_verified:number;learning_outcomes:number;learning_outcomes_verified:number;note:string};
@@ -37,6 +37,19 @@ export default function CurriculumPage(){
  async function uploadDocument(){if(!sourceFile){setError("Choose a curriculum source file first.");return}setBusy(true);setError("");setNotice("");try{const f=new FormData();f.append("file",sourceFile);f.append("title",title);f.append("curriculum_version",version);f.append("publication_year",year);f.append("education_level",level);f.append("source_url",url);f.append("document_type","syllabus");const r=await fetch(`${API}/api/v1/curriculum/documents/upload`,{method:"POST",body:f});const d=await r.json();if(!r.ok)throw Error(d.detail||"Upload failed");setNotice(`Source uploaded. Text extraction: ${d.document.extraction_status}. Review the original NCDC document before marking it verified.`);setSourceFile(null);await load();setSelected(d.document.id)}catch(ex){setError(ex instanceof Error?ex.message:"Upload failed")}finally{setBusy(false)}}
  async function reviewDocument(decision:"verified"|"unverified"|"rejected"){if(!selected)return;setBusy(true);setError("");try{const r=await fetch(`${API}/api/v1/curriculum/documents/${selected}/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision,reviewer_name:"Curriculum Reviewer",notes:"Reviewed against the original source document."})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Review failed");setNotice(`Source document status: ${d.verification_status}.`);await load()}catch(ex){setError(ex instanceof Error?ex.message:"Review failed")}finally{setBusy(false)}}
  async function retryExtraction(){if(!selected)return;setBusy(true);setError("");try{const r=await fetch(`${API}/api/v1/curriculum/documents/${selected}/re-extract`,{method:"POST"});const d=await r.json();if(!r.ok)throw Error(d.detail||"Text extraction retry failed");setNotice(`Extraction status: ${d.document.extraction_status}. ${d.document.extracted_characters.toLocaleString()} characters extracted.`);await load()}catch(ex){setError(ex instanceof Error?ex.message:"Text extraction retry failed")}finally{setBusy(false)}}
+ async function deleteDocument(doc:Doc){
+  if(doc.linked_entries>0||doc.linked_topics>0||doc.linked_questions>0){setError(`Cannot delete “${doc.title}”: it is still referenced by ${doc.linked_entries} curriculum entr${doc.linked_entries===1?"y":"ies"}, ${doc.linked_topics} topic record${doc.linked_topics===1?"":"s"}, and ${doc.linked_questions} generated question record${doc.linked_questions===1?"":"s"}. Remove or reassign those references first.`);return}
+  if(!window.confirm(`Permanently delete the registered source document “${doc.title}” and its stored file? This action cannot be undone. No curriculum entries are linked to this document.`))return;
+  setBusy(true);setError("");setNotice("");
+  try{
+   const r=await fetch(`${API}/api/v1/curriculum/documents/${doc.id}`,{method:"DELETE"});
+   const d=await r.json();if(!r.ok)throw Error(d.detail||"Document deletion failed");
+   if(selected===doc.id)setSelected("");
+   setNotice(`Deleted source document “${doc.title}”.`);
+   await load();
+  }catch(ex){setError(ex instanceof Error?ex.message:"Document deletion failed")}
+  finally{setBusy(false)}
+ }
  async function deleteSelectedEntries(){const ids=visibleSelectedIds;if(!ids.length)return;if(!window.confirm(`Permanently delete ${ids.length} selected curriculum entries currently shown by these filters? Child entries and associated learning outcomes will also be deleted.`))return;setBusy(true);setError("");try{const r=await fetch(`${API}/api/v1/curriculum/entries/delete-bulk`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Delete failed");setNotice(`Deleted ${d.deleted_entries} curriculum entries. Related topic records used by questions were retained but returned to unverified status.`);setSelectedEntryIds([]);await load()}catch(ex){setError(ex instanceof Error?ex.message:"Delete failed")}finally{setBusy(false)}}
  async function importCsv(){if(!selected||!csvFile){setError("Select a verified source document and a CSV file.");return}setBusy(true);setError("");setImportErrors([]);try{const f=new FormData();f.append("file",csvFile);const r=await fetch(`${API}/api/v1/curriculum/documents/${selected}/import-csv`,{method:"POST",body:f});const d=await r.json();if(!r.ok)throw Error(d.detail||"Import failed");setImportErrors(Array.isArray(d.errors)?d.errors:[]);setNotice(`Imported ${d.nodes_created} curriculum entries and ${d.learning_outcomes_created} learning outcomes. ${d.rows_with_errors} row errors. ${d.nodes_created===0&&d.rows_with_errors>0?"No entries were imported; inspect the row errors below.":""}`);setCsvFile(null);await load()}catch(ex){setError(ex instanceof Error?ex.message:"Import failed")}finally{setBusy(false)}}
  async function reviewEntry(id:string,decision:"verified"|"rejected"){setBusy(true);setError("");try{const r=await fetch(`${API}/api/v1/curriculum/entries/${id}/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision,reviewer_name:"Curriculum Reviewer",notes:"Checked against source document and page reference."})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Review failed");setNotice(`Entry '${d.title}' marked ${d.verification_status}. Verified topics become available to the question generator.`);await load()}catch(ex){setError(ex instanceof Error?ex.message:"Review failed")}finally{setBusy(false)}}
@@ -44,16 +57,17 @@ export default function CurriculumPage(){
  return <>
  <header className="top sasa-header">
   <div className="sasa-header-content">
-    <a href="/" className="sasa-brand" aria-label="SASA Home">
-      <span className="sasa-brand-mark">S</span>
-      <span>SASA</span>
-    </a>
-    <p className="sasa-tagline">
-      Intelligent Assessment. Better Learning.
-    </p>
-    <span className="sasa-workspace-label">
-      UGANDAN CURRICULUM CONTENT SYSTEM
-    </span>
+    <div className="sasa-header-brand">
+      <a href="/" className="sasa-brand" aria-label="SASA Home">
+        <span className="sasa-brand-mark">S</span>
+        <span>SASA</span>
+        <span className="sasa-version">v1.0</span>
+      </a>
+
+      <p className="sasa-tagline">
+        Intelligent Assessment. Better Learning.
+      </p>
+    </div>
     <div className="sasa-curriculum-description">
       Manage, validate and organize Uganda's national curriculum
       content from verified source documents.
@@ -64,9 +78,6 @@ export default function CurriculumPage(){
         <span>Back to Teacher Workspace</span>
       </a>
     </nav>
-    <span className="sasa-version">
-     v0.1.0
-    </span>
   </div>
 </header>
  <main className="wrap">
@@ -77,6 +88,16 @@ export default function CurriculumPage(){
  <label>Source file</label><input type="file" accept=".pdf,.docx,.txt,.md" onChange={e=>setSourceFile(e.target.files?.[0]||null)}/>
  <div className="grid two"><div><label>Document title</label><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Lower Secondary Mathematics Syllabus"/></div><div><label>Curriculum version / edition</label><input value={version} onChange={e=>setVersion(e.target.value)} placeholder="Edition or version as printed"/></div><div><label>Publication year</label><input value={year} onChange={e=>setYear(e.target.value)} placeholder="e.g. 2025"/></div><div><label>Education level</label><input value={level} onChange={e=>setLevel(e.target.value)} placeholder="e.g. Lower Secondary S1–S4"/></div></div>
  <label>Official source URL (optional)</label><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://..."/><button className="primary" disabled={busy||!sourceFile} onClick={uploadDocument}>{busy?"Working...":"Upload and extract text"}</button></section>
+ <section className="panel">
+  <h2>Registered curriculum documents</h2>
+  <p className="muted">Remove unnecessary source files here. For safety, SASA allows deletion only when a document has no curriculum entries, topic records or generated questions referencing it. Existing curriculum entries, learning outcomes, topics and questions are never automatically deleted by this action.</p>
+  {docs.length===0?<p className="muted">No source documents have been registered yet.</p>:<div className="document-management-list">
+   {docs.map(d=><div key={d.id} className="document-management-row">
+    <div className="document-management-info"><b>{d.title}</b><span>{d.original_filename} · {d.verification_status} · {d.linked_entries} linked entr{d.linked_entries===1?"y":"ies"} · {d.linked_topics} topic record{d.linked_topics===1?"":"s"} · {d.linked_questions} question record{d.linked_questions===1?"":"s"}</span></div>
+    <button className="danger document-delete-button" disabled={busy||d.linked_entries>0||d.linked_topics>0||d.linked_questions>0} title={d.linked_entries>0||d.linked_topics>0||d.linked_questions>0?"Remove linked curriculum references first":"Delete this unused source document"} onClick={()=>deleteDocument(d)}>Delete</button>
+   </div>)}
+  </div>}
+ </section>
  <section className="panel"><h2>2. Verify the source and import curriculum rows</h2><label>Registered source document</label><select value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Select source document</option>{docs.map(d=><option key={d.id} value={d.id}>{d.title} · {d.verification_status}</option>)}</select>
  {selectedDoc&&<><p><b>{selectedDoc.title}</b></p><p className="muted">{selectedDoc.original_filename} · {selectedDoc.curriculum_version||"Version not recorded"} · {selectedDoc.extraction_status} · {selectedDoc.extracted_characters.toLocaleString()} extracted characters</p><p className="muted">SHA-256: {selectedDoc.sha256||"—"}</p>{selectedDoc.extraction_status!=="extracted"&&<div className="actions"><button className="secondary" disabled={busy} onClick={retryExtraction}>Retry text extraction</button><span className="muted">This retries the already registered file; it does not upload a duplicate.</span></div>}<div className="actions"><button className="secondary" disabled={busy} onClick={()=>reviewDocument("verified")}>Mark source verified</button><button className="danger" disabled={busy} onClick={()=>reviewDocument("rejected")}>Reject source</button><button className="secondary" disabled={busy} onClick={()=>reviewDocument("unverified")}>Return to unverified</button></div><p className="muted">Only mark verified after checking the issuing authority, edition, applicable classes and source document itself. This action unlocks CSV import; it does not mean SASA independently certified the document.</p>
  <div className="actions"><a href={`${API}/api/v1/curriculum/csv-template`} target="_blank" rel="noreferrer">Download CSV import template</a><a href={`${API}/api/v1/curriculum/documents/${selected}/text`} target="_blank" rel="noreferrer">View extracted text</a></div>
