@@ -70,9 +70,16 @@ export default function PromptStudio(){
   }catch(e){setError(e instanceof Error?e.message:"Could not delete conversation")}finally{setBusy(false)}
  }
  async function ensureSession(){
-  if(session)return session;
+  const context={grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null};
+  if(session){
+   // Persist the current selectors before sending. This also repairs older
+   // sessions that were created before a class/subject was selected.
+   const r=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/context`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(context)});
+   const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not update session class and subject");
+   setSession(old=>old?{...old,...d}:d);await refreshSessions();return {...session,...d} as Session;
+  }
   const r=await fetch(`${API}/api/v1/prompt-studio/sessions`,{method:"POST",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({title:"New prompt session",grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null})});
+   body:JSON.stringify({title:"New prompt session",...context})});
   const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not start session");
   setSession(d);await refreshSessions();return d as Session;
  }
@@ -94,6 +101,12 @@ export default function PromptStudio(){
   if(!session||!selectedDrafts.length)return;
   setBusy(true);setError("");
   try{
+   // Persist the visible class/subject selectors before approving older drafts.
+   const contextResponse=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/context`,{method:"PATCH",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null})});
+   const contextData=await contextResponse.json();
+   if(!contextResponse.ok)throw Error(contextData.detail||"Select a valid class and subject before approving drafts");
+   setSession(old=>old?{...old,...contextData}:contextData);
    const r=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/send-to-bank`,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({draft_ids:selectedDrafts,reviewer_name:"Teacher"})});
    const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not add selected drafts");
