@@ -1,10 +1,10 @@
-# SASA EduAssess Uganda — Version 0.1
+# SASA EduAssess Uganda — Version 1.0
 
-Milestone 0.3 adds a curriculum source registry, document text extraction, structured CSV curriculum import, review/verification workflow, and a dedicated Curriculum Content Manager page. It builds on the v0.2 question-generation and examination-paper features.
+Milestone 1.0 adds a curriculum source registry, document text extraction, structured CSV curriculum import, review/verification workflow, and a dedicated Curriculum Content Manager page. It builds on the v0.2 question-generation and examination-paper features.
 
-> **v0.3.2 production-fix notice:** This package removes the embedded API credential and adds a Render deployment scaffold. It is not approved for public deployment yet. The application still needs registration/login, role-based authorization, per-user data isolation and persistent object storage. See [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before deploying.
+> **v1.0 production-fix notice:** This package removes the embedded API credential and adds a Render deployment scaffold. It is not approved for public deployment yet. The application still needs registration/login, role-based authorization, per-user data isolation and persistent object storage. See [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before deploying.
 
-## Important: what v0.3 does and does not mean
+## Important: what v1.0 does and does not mean
 
 This release is the **curriculum content management and ingestion system**, not a complete pre-populated transcription of every current NCDC syllabus. The P1–S6 class directory and broad subject catalogue are retained. The existing Mathematics starter topics remain unverified examples. No unverified or invented topic is presented as official curriculum content.
 
@@ -25,9 +25,9 @@ Text extraction is a convenience, not curriculum interpretation. Scanned PDFs ma
 - Windows 11
 - Python 3.12 recommended
 - Node.js 20 or later (your existing Node 24 is suitable)
-- Existing v0.2 project and database
+- Existing v0.1 project and database
 
-## Upgrade from v0.2 (Windows PowerShell)
+## Upgrade from v0.1 (Windows PowerShell)
 
 1. Stop backend and frontend with `Ctrl+C`.
 2. Back up `backend\sasa_eduassess.db`, `backend\.env` and `frontend\.env.local`.
@@ -128,7 +128,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/curriculum/summary
 ```
 
-Expected health version: `0.3.0`. Initially, the curriculum summary may report zero registered source documents and zero imported curriculum entries. This is expected; the v0.2 seed does not invent or bulk-populate NCDC content.
+Expected health version: `1.0.0`. Initially, the curriculum summary may report zero registered source documents and zero imported curriculum entries. This is expected; the v0.2 seed does not invent or bulk-populate NCDC content.
 
 ## Known limitations and next work
 
