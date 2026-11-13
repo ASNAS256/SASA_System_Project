@@ -103,19 +103,21 @@ export default function Home(){
  return <>
   <header className="top sasa-header">
   <div className="sasa-header-content">
-    <a href="/" className="sasa-brand" aria-label="SASA Home">
-      <span className="sasa-brand-mark">S</span>
-      <span>SASA</span>
-    </a>
 
-    <p className="sasa-tagline">
-      Intelligent Assessment. Better Learning.
-    </p>
+    {/* Left: Brand and tagline */}
+    <div className="sasa-header-brand">
+      <a href="/" className="sasa-brand" aria-label="SASA Home">
+        <span className="sasa-brand-mark">S</span>
+        <span>SASA</span>
+        <span className="sasa-version">v1.0</span>
+      </a>
 
-    <span className="sasa-workspace-label">
-      TEACHING &amp; ASSESSMENT WORKSPACE
-    </span>
+      <p className="sasa-tagline">
+        Intelligent Assessment. Better Learning.
+      </p>
+    </div>
 
+    {/* Right: Navigation */}
     <nav className="topnav sasa-navigation" aria-label="Main navigation">
       <a href="/prompt-studio" className="sasa-nav-link prompt-link">
         <span className="sasa-nav-icon">✦</span>
@@ -130,7 +132,6 @@ export default function Home(){
       </a>
     </nav>
 
-    <span className="sasa-version">SASA · v0.1.0</span>
   </div>
 </header>
   <main className="wrap">
