@@ -1,0 +1,22 @@
+
+# Dependencies and build outputs
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/build/
+**/__pycache__/
+**/.venv/
+**/venv/
+
+# Local databases and uploaded files
+*.db
+*.sqlite
+*.sqlite3
+*.pdf
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.local.example

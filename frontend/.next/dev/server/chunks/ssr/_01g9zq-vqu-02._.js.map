@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///C:/SASA-EduAssess/frontend/node_modules/next/src/server/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.ts"],"sourcesContent":["module.exports = (\n  require('../../module.compiled') as typeof import('../../module.compiled')\n).vendored['react-rsc']!.ReactJsxDevRuntime\n"],"names":["module","exports","require","vendored","ReactJsxDevRuntime"],"mappings":"AAAAA,OAAOC,OAAO,GACZC,QAAQ,4HACRC,QAAQ,CAAC,YAAY,CAAEC,kBAAkB","ignoreList":[0]}},
+    {"offset": {"line": 9, "column": 0}, "map": {"version":3,"sources":["file:///C:/SASA-EduAssess/frontend/src/app/layout.tsx"],"sourcesContent":["import type { Metadata } from \"next\";\nimport \"./globals.css\";\nexport const metadata: Metadata = {\n  title: \"SASA EduAssess | Assessment for Uganda\",\n  description: \"Curriculum-informed question generation, teacher review, classroom activities and examination papers for Uganda.\",\n};\nexport default function RootLayout({children}:{children:React.ReactNode}) {\n  return <html lang=\"en\" suppressHydrationWarning><body suppressHydrationWarning>{children}</body></html>;\n}\n"],"names":["metadata","title","description","RootLayout","children","lang","suppressHydrationWarning"],"mappings":";;;;;;;;;AAEO,MAAMA,WAAqB;IAChCC,OAAO;IACPC,aAAa;AACf;AACe,SAASC,WAAW,EAACC,QAAQ,EAA4B;IACtE,qBAAO,8OAAC;QAAKC,MAAK;QAAKC,wBAAwB;kBAAC,cAAA,8OAAC;YAAKA,wBAAwB;sBAAEF;;;;;;;;;;;AAClF"}}]
+}
