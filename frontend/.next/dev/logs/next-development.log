@@ -1,8 +1,0 @@
-{"timestamp":"00:00:02.311","source":"Server","level":"LOG","message":""}
-{"timestamp":"00:00:09.750","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
-{"timestamp":"00:29:51.401","source":"Server","level":"ERROR","message":"⨯ PageNotFoundError: Cannot find module for page: route not found /_not-found/page"}
-{"timestamp":"00:29:53.890","source":"Server","level":"ERROR","message":"⨯ PageNotFoundError: Cannot find module for page: route not found /_not-found/page"}
-{"timestamp":"00:29:53.957","source":"Server","level":"ERROR","message":"⨯ PageNotFoundError: Cannot find module for page: route not found /_not-found/page"}
-{"timestamp":"00:29:53.967","source":"Server","level":"ERROR","message":"⨯ PageNotFoundError: Cannot find module for page: route not found /_not-found/page"}
-{"timestamp":"00:29:54.221","source":"Browser","level":"ERROR","message":"Uncaught PageNotFoundError: Cannot find module for page: route not found /_not-found/page"}
-{"timestamp":"00:29:54.221","source":"Server","level":"ERROR","message":"[browser] \"\\u001b[31mUncaught PageNotFoundError: Cannot find module for page: route not found /_not-found/page\\u001b[39m\""}
