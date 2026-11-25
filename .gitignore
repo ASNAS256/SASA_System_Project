@@ -17,6 +17,7 @@ node_modules/
 .next/
 out/
 *.log
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store

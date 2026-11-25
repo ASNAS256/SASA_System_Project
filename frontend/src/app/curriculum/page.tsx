@@ -73,6 +73,11 @@ export default function CurriculumPage(){
       content from verified source documents.
     </div>
     <nav className="sasa-navigation curriculum-navigation">
+      <a href="/prompt-studio" className="sasa-nav-link prompt-link">
+        <span className="sasa-nav-icon">✦</span>
+        <span>SASA AI</span>
+        <span className="sasa-nav-arrow">→</span>
+      </a>
       <a href="/" className="sasa-nav-link curriculum-back-link">
         <span className="sasa-nav-arrow">←</span>
         <span>Back to Teacher Workspace</span>

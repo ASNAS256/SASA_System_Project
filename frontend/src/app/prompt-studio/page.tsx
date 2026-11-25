@@ -120,7 +120,7 @@ export default function PromptStudio(){
  return <div className="studio-shell">
   <header className="studio-header">
    <div className="brand"><span className="brand-mark">S</span><div><b>SASA</b><small>AI teaching & assessment studio</small></div></div>
-   <nav><a href="/">Assessment engine</a><a href="/curriculum">Curriculum manager</a></nav>
+   <nav><a href="/prompt-studio" aria-current="page">SASA AI</a><a href="/">Assessment engine</a><a href="/curriculum">Curriculum manager</a></nav>
   </header>
   <main className="studio-main">
    <div className="studio-intro"><div><span className="eyebrow">TEACHER WORKSPACE · V0.1.0</span><h1>AI Prompt Studio</h1>
