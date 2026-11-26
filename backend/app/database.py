@@ -27,6 +27,10 @@ def migrate_schema():
             "learning_outcome": "TEXT NOT NULL DEFAULT ''",
             "options_json": "TEXT NOT NULL DEFAULT '[]'",
             "explanation": "TEXT NOT NULL DEFAULT ''",
+            "deleted_at": "DATETIME",
+        },
+        "examinations": {
+            "paper_type": "VARCHAR(30) NOT NULL DEFAULT 'examination'",
         },
     }
     inspector = inspect(engine)
@@ -55,6 +59,7 @@ def migrate_schema():
                 WHERE moderation_category IS NULL OR moderation_category = ''
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_questions_moderation_category ON questions (moderation_category)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_questions_deleted_at ON questions (deleted_at)"))
 
 def get_db():
     db = SessionLocal()

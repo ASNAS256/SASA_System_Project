@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import datetime, timezone
 from io import BytesIO
 from xml.sax.saxutils import escape
 from fastapi import FastAPI, Depends, HTTPException, Query
@@ -6,16 +8,17 @@ from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet
 
 from app.database import Base, engine, get_db, migrate_schema
 from app.core.config import settings
-from app.models import Grade, Subject, Topic, Question, TeacherReview, Examination, ExaminationQuestion, CurriculumDocument, CurriculumNode, LearningOutcome
-from app.schemas import GenerateRequest, ApproveRequest, BuildExaminationRequest
+from app.models import Grade, Subject, Topic, Question, TeacherReview, Examination, ExaminationQuestion, CurriculumDocument, CurriculumNode, LearningOutcome, PromptDraft
+from app.schemas import GenerateRequest, ApproveRequest, BuildExaminationRequest, BuildSelectedAssessmentRequest
 from app.services.question_generator import generate_questions
+from app.services.rag import retrieve as retrieve_documents
 from app.routers.curriculum import router as curriculum_router
 from app.routers.prompt_studio import router as prompt_studio_router
 
@@ -64,16 +67,24 @@ def _subject_ids(db: Session, subject) -> list[str]:
 Base.metadata.create_all(bind=engine)
 migrate_schema()
 
-app = FastAPI(title=settings.app_name, description="SASA teaching, curriculum intelligence and assessment API", version="0.3.2")
+app = FastAPI(title=settings.app_name, description="SASA teaching, curriculum intelligence and assessment API", version="0.1.0")
 app.include_router(curriculum_router)
 app.include_router(prompt_studio_router)
 app.add_middleware(CORSMiddleware, allow_origins=list({settings.frontend_origin, "http://127.0.0.1:3000", "http://localhost:3000"}),
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+def _topic_label(q):
+    if q.curriculum_node:
+        return q.curriculum_node.title
+    if q.topic:
+        return q.topic.name
+    match = re.search(r"Topic:\s*([^|]+?)\s*(?:\||$)", q.curriculum_reference or "")
+    return match.group(1).strip() if match and match.group(1).strip().lower() != "not specified" else None
+
 def serialize_question(q):
     return {
         "id": q.id, "grade_code": q.grade.code, "subject_name": q.subject.name,
-        "topic_name": (q.curriculum_node.title if q.curriculum_node else (q.topic.name if q.topic else None)),
+        "topic_name": _topic_label(q),
         "curriculum_node_id": q.curriculum_node_id, "question_text": q.question_text,
         "question_type": q.question_type, "difficulty": q.difficulty, "marks": q.marks,
         "expected_answer": q.expected_answer, "marking_guide": q.marking_guide,
@@ -87,18 +98,18 @@ def serialize_exam(exam):
     return {
         "id": exam.id, "title": exam.title, "grade_code": exam.grade.code,
         "subject_name": exam.subject.name, "duration_minutes": exam.duration_minutes,
-        "total_marks": exam.total_marks, "status": exam.status,
+        "total_marks": exam.total_marks, "paper_type": getattr(exam, "paper_type", "examination"), "status": exam.status,
         "question_count": len(exam.items),
         "questions": [{"position": item.position, "question": serialize_question(item.question)} for item in exam.items],
     }
 
 @app.get("/")
 def root():
-    return {"system": settings.app_name, "version": "0.3.2", "docs": "/docs"}
+    return {"system": settings.app_name, "version": "0.1.0", "docs": "/docs"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "environment": settings.app_env, "version": "0.3.2"}
+    return {"status": "healthy", "environment": settings.app_env, "version": "0.1.0"}
 
 @app.get("/api/v1/curriculum/grades")
 def grades(db: Session = Depends(get_db)):
@@ -260,14 +271,23 @@ def generate(payload: GenerateRequest, db: Session = Depends(get_db)):
     legacy_topic = db.scalar(select(Topic).where(
         Topic.grade_id == grade.id, Topic.subject_id.in_(_subject_ids(db, subject)),
         Topic.name.ilike(node.title), Topic.verification_status == "verified"))
+    # RAG: the same knowledge base SASA AI uses (uploaded lesson notes / documents + verified NCDC text)
+    retrieval_query = " ".join([node.title, subject.name, grade.code, outcome])
+    sources = retrieve_documents(db, retrieval_query, limit=6) if payload.use_documents else []
+    evidence = "\n\n".join(f"[SOURCE {i+1}] {s['title']} - {s['page_reference'] or 'document'}\n{s['content']}"
+                           for i, s in enumerate(sources))
     try:
         generated, source = generate_questions(
             node.title, grade.name, payload.number_of_questions, payload.difficulty,
             payload.question_type, payload.context, curriculum_ref,
-            payload.bloom_level, outcome, subject.name
+            payload.bloom_level, outcome, subject.name, evidence
         )
     except Exception as exc:
         raise HTTPException(502, f"Generation failed: {str(exc)}")
+    if source == "demo_ai":
+        sources = []  # the offline demo generator does not read documents, so do not claim it did
+    elif sources:
+        curriculum_ref += " | grounded in teacher documents: " + "; ".join(dict.fromkeys(s["title"] for s in sources))
     saved = []
     for item in generated:
         q = Question(
@@ -291,7 +311,8 @@ def generate(payload: GenerateRequest, db: Session = Depends(get_db)):
     for q in saved:
         db.refresh(q)
     return {"message": "Draft questions generated from verified curriculum content. Teacher review is required.",
-            "source": source, "count": len(saved), "questions": [serialize_question(q) for q in saved]}
+            "source": source, "count": len(saved), "questions": [serialize_question(q) for q in saved],
+            "sources": [{"title": s["title"], "page_reference": s["page_reference"], "source_type": s["source_type"]} for s in sources]}
 
 @app.get("/api/v1/questions")
 def list_questions(grade_code: str | None = None, subject_name: str | None = None,
@@ -300,7 +321,7 @@ def list_questions(grade_code: str | None = None, subject_name: str | None = Non
     stmt = select(Question).options(
         selectinload(Question.grade), selectinload(Question.subject), selectinload(Question.topic),
         selectinload(Question.curriculum_node)
-    ).order_by(Question.created_at.desc())
+    ).where(Question.deleted_at.is_(None)).order_by(Question.created_at.desc())
     if grade_code:
         g = db.scalar(select(Grade).where(Grade.code == grade_code.upper()))
         if not g:
@@ -360,26 +381,54 @@ def update_question_category(question_id: str, payload: QuestionCategoryUpdate, 
     return {"id": question.id, "moderation_category": question.moderation_category}
 
 
+def _purge_orphaned_deleted_questions(db: Session):
+    """Hard-delete soft-deleted questions that no saved paper uses any more."""
+    still_used = select(ExaminationQuestion.question_id)
+    orphans = db.scalars(select(Question).where(
+        Question.deleted_at.is_not(None), Question.id.not_in(still_used))).all()
+    ids = [q.id for q in orphans]
+    if ids:
+        _detach_question_records(db, ids)
+        for q in orphans:
+            db.delete(q)
+    return len(ids)
+
+
+def _detach_question_records(db: Session, question_ids: list[str]):
+    """Drop review history and tell SASA AI drafts their bank question is gone."""
+    db.query(TeacherReview).filter(TeacherReview.question_id.in_(question_ids)).delete(synchronize_session=False)
+    for draft in db.scalars(select(PromptDraft).where(PromptDraft.question_id.in_(question_ids))).all():
+        draft.status = "removed_from_bank"
+        draft.question_id = None
+
+
 def _delete_questions_safely(question_ids: list[str], db: Session):
+    """Any question can be deleted: draft, approved, rejected or used.
+
+    * Not used in any saved paper -> removed completely.
+    * Used in saved paper(s)      -> removed from the question bank, activity builder and every list,
+                                     but the row is retained (hidden) so the saved paper still prints
+                                     exactly as it was issued.
+    """
     unique_ids = list(dict.fromkeys(question_ids))
-    found = db.scalars(select(Question).where(Question.id.in_(unique_ids))).all()
+    found = db.scalars(select(Question).where(Question.id.in_(unique_ids), Question.deleted_at.is_(None))).all()
     found_ids = {q.id for q in found}
     missing = [qid for qid in unique_ids if qid not in found_ids]
     if missing:
         raise HTTPException(404, f"Question(s) not found: {', '.join(missing[:10])}")
-    linked = set(db.scalars(select(ExaminationQuestion.question_id).where(
-        ExaminationQuestion.question_id.in_(unique_ids)
-    )).all())
-    if linked:
-        raise HTTPException(409, {
-            "message": "Some selected questions are already used in examination papers and were not deleted.",
-            "protected_question_ids": sorted(linked),
-        })
-    db.query(TeacherReview).filter(TeacherReview.question_id.in_(unique_ids)).delete(synchronize_session=False)
-    for question in found:
-        db.delete(question)
+    in_papers = set(db.scalars(select(ExaminationQuestion.question_id).where(
+        ExaminationQuestion.question_id.in_(unique_ids))).all())
+    now = datetime.now(timezone.utc)
+    removed_fully = [q for q in found if q.id not in in_papers]
+    kept_for_papers = [q for q in found if q.id in in_papers]
+    _detach_question_records(db, [q.id for q in found])
+    for q in removed_fully:
+        db.delete(q)
+    for q in kept_for_papers:
+        q.deleted_at = now
     db.commit()
-    return {"message": "Questions deleted.", "deleted_count": len(found), "ids": unique_ids}
+    return {"message": "Questions deleted.", "deleted_count": len(found), "ids": unique_ids,
+            "retained_in_papers_count": len(kept_for_papers)}
 
 
 @app.delete("/api/v1/questions/{question_id}")
@@ -402,15 +451,18 @@ def build_examination(payload: BuildExaminationRequest, db: Session = Depends(ge
         selectinload(Question.grade), selectinload(Question.subject), selectinload(Question.topic)
     ).where(
         Question.grade_id == grade.id,
-        Question.subject_id == subject.id,
+        Question.subject_id.in_(_subject_ids(db, subject)),
         Question.approval_status == "approved",
+        Question.deleted_at.is_(None),
     ).order_by(Question.created_at.asc())
     if payload.difficulty != "any":
         stmt = stmt.where(Question.difficulty == payload.difficulty)
     if payload.bloom_levels:
         stmt = stmt.where(Question.bloom_level.in_(payload.bloom_levels))
     if payload.topic_names:
-        stmt = stmt.join(Topic, Question.topic_id == Topic.id).where(Topic.name.in_(payload.topic_names))
+        stmt = stmt.outerjoin(Topic, Question.topic_id == Topic.id).where(or_(
+            Topic.name.in_(payload.topic_names),
+            *[Question.curriculum_reference.ilike(f"%Topic: {name}%") for name in payload.topic_names]))
     candidates = db.scalars(stmt).unique().all()
 
     target = int(round(payload.total_marks * 100))
@@ -434,7 +486,8 @@ def build_examination(payload: BuildExaminationRequest, db: Session = Depends(ge
         )
     selected = dp[target]
     exam = Examination(title=payload.title, grade_id=grade.id, subject_id=subject.id,
-                       duration_minutes=payload.duration_minutes, total_marks=payload.total_marks, status="draft")
+                       duration_minutes=payload.duration_minutes, total_marks=payload.total_marks,
+                       paper_type="examination", status="draft")
     db.add(exam)
     db.flush()
     for position, q in enumerate(selected, start=1):
@@ -449,6 +502,68 @@ def build_examination(payload: BuildExaminationRequest, db: Session = Depends(ge
     return {"message": "Draft examination assembled from approved questions.",
             "examination": serialize_exam(exam)}
 
+@app.post("/api/v1/assessments/build-selected")
+def build_selected_assessment(payload: BuildSelectedAssessmentRequest, db: Session = Depends(get_db)):
+    """Create an Activity or Examination from the teacher's explicitly selected approved questions."""
+    grade = db.scalar(select(Grade).where(Grade.code == payload.grade_code.upper()))
+    subject = _resolve_subject(db, payload.subject_name)
+    if not grade or not subject:
+        raise HTTPException(404, "Class or subject not found.")
+
+    question_ids = list(dict.fromkeys(payload.question_ids))
+    if len(question_ids) != len(payload.question_ids):
+        raise HTTPException(422, "The selection contains duplicate question IDs.")
+    rows = db.scalars(select(Question).options(
+        selectinload(Question.grade), selectinload(Question.subject),
+        selectinload(Question.topic), selectinload(Question.curriculum_node)
+    ).where(Question.id.in_(question_ids), Question.deleted_at.is_(None))).all()
+    by_id = {q.id: q for q in rows}
+    missing = [qid for qid in question_ids if qid not in by_id]
+    if missing:
+        raise HTTPException(404, f"Selected question(s) not found: {', '.join(missing[:8])}")
+    selected = [by_id[qid] for qid in question_ids]
+
+    not_approved = [q.id for q in selected if q.approval_status != "approved"]
+    if not_approved:
+        raise HTTPException(422, {
+            "message": "Only teacher-approved questions can be added to an Activity or Examination.",
+            "questions_requiring_approval": not_approved,
+        })
+    wrong_class = [q.id for q in selected if q.grade_id != grade.id]
+    wrong_subject = [q.id for q in selected if q.subject_id not in _subject_ids(db, subject)]
+    if wrong_class or wrong_subject:
+        raise HTTPException(422, {
+            "message": "All selected questions must belong to the selected class and subject.",
+            "wrong_class_question_ids": wrong_class,
+            "wrong_subject_question_ids": wrong_subject,
+        })
+
+    total_marks = round(sum(float(q.marks or 0) for q in selected), 2)
+    if total_marks <= 0 or total_marks > 500:
+        raise HTTPException(422, "The selected questions must have a positive total not exceeding 500 marks.")
+
+    exam = Examination(
+        title=payload.title.strip(), grade_id=grade.id, subject_id=subject.id,
+        duration_minutes=payload.duration_minutes, total_marks=total_marks,
+        paper_type=payload.assessment_type, status="draft"
+    )
+    db.add(exam)
+    db.flush()
+    for position, question in enumerate(selected, start=1):
+        db.add(ExaminationQuestion(examination_id=exam.id, question_id=question.id, position=position))
+    db.commit()
+
+    exam = db.scalar(select(Examination).options(
+        selectinload(Examination.grade), selectinload(Examination.subject),
+        selectinload(Examination.items).selectinload(ExaminationQuestion.question).selectinload(Question.grade),
+        selectinload(Examination.items).selectinload(ExaminationQuestion.question).selectinload(Question.subject),
+        selectinload(Examination.items).selectinload(ExaminationQuestion.question).selectinload(Question.topic),
+        selectinload(Examination.items).selectinload(ExaminationQuestion.question).selectinload(Question.curriculum_node),
+    ).where(Examination.id == exam.id))
+    return {"message": f"{payload.assessment_type.title()} created from selected approved questions.",
+            "examination": serialize_exam(exam)}
+
+
 @app.get("/api/v1/examinations")
 def list_examinations(db: Session = Depends(get_db)):
     rows = db.scalars(select(Examination).options(
@@ -458,6 +573,35 @@ def list_examinations(db: Session = Depends(get_db)):
         selectinload(Examination.items).selectinload(ExaminationQuestion.question).selectinload(Question.topic),
     ).order_by(Examination.created_at.desc())).all()
     return [serialize_exam(e) for e in rows]
+
+class BulkExamDelete(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=200)
+
+
+def _delete_examinations(ids: list[str], db: Session):
+    unique_ids = list(dict.fromkeys(ids))
+    exams = db.scalars(select(Examination).where(Examination.id.in_(unique_ids))).all()
+    missing = sorted(set(unique_ids) - {e.id for e in exams})
+    if missing:
+        raise HTTPException(404, f"Saved paper(s) not found: {', '.join(missing[:10])}")
+    for exam in exams:
+        db.delete(exam)  # its question links are removed with it; the questions in the bank are untouched
+    db.flush()
+    purged = _purge_orphaned_deleted_questions(db)  # tidy up questions that were deleted but only this paper kept
+    db.commit()
+    return {"message": "Saved paper(s) deleted. The questions in your question bank were not affected.",
+            "deleted_count": len(exams), "ids": unique_ids, "purged_hidden_questions": purged}
+
+
+@app.delete("/api/v1/examinations/{examination_id}")
+def delete_examination(examination_id: str, db: Session = Depends(get_db)):
+    return _delete_examinations([examination_id], db)
+
+
+@app.post("/api/v1/examinations/bulk-delete")
+def bulk_delete_examinations(payload: BulkExamDelete, db: Session = Depends(get_db)):
+    return _delete_examinations(payload.ids, db)
+
 
 def make_pdf(story, filename):
     buf = BytesIO()
@@ -473,7 +617,7 @@ def safe_paragraph(value):
 def question_pdf(question_id: str, teacher_copy: bool = True, db: Session = Depends(get_db)):
     q = db.scalar(select(Question).options(
         selectinload(Question.grade), selectinload(Question.subject), selectinload(Question.topic)
-    ).where(Question.id == question_id))
+    ).where(Question.id == question_id, Question.deleted_at.is_(None)))
     if not q:
         raise HTTPException(404, "Question not found.")
     styles = getSampleStyleSheet()
@@ -501,10 +645,14 @@ def examination_pdf(examination_id: str, teacher_copy: bool = False, db: Session
     if not exam:
         raise HTTPException(404, "Examination not found.")
     styles = getSampleStyleSheet()
-    story = [Paragraph("SASA", styles["Title"]),
-        Paragraph(safe_paragraph(exam.title), styles["Heading1"]),
+    paper_label = "Activity" if getattr(exam, "paper_type", "examination") == "activity" else "Examination"
+    instructions = ("Instructions: Complete each activity. Show your working and explain your answers where appropriate."
+                    if paper_label == "Activity" else
+                    "Instructions: Answer all questions. Show your working where applicable.")
+    story = [Paragraph("SASA ", styles["Title"]),
+        Paragraph(safe_paragraph(f"{paper_label}: {exam.title}"), styles["Heading1"]),
         Paragraph(safe_paragraph(f"{exam.grade.name} | {exam.subject.name} | Duration: {exam.duration_minutes} minutes | Total: {exam.total_marks:g} marks"), styles["Heading2"]),
-        Spacer(1, 16), Paragraph("Instructions: Answer all questions. Show your working where applicable.", styles["BodyText"]), Spacer(1, 12)]
+        Spacer(1, 16), Paragraph(safe_paragraph(instructions), styles["BodyText"]), Spacer(1, 12)]
     for item in exam.items:
         q = item.question
         story.append(Paragraph(safe_paragraph(f"{item.position}. {q.question_text} ({q.marks:g} marks)"), styles["BodyText"]))
@@ -513,14 +661,17 @@ def examination_pdf(examination_id: str, teacher_copy: bool = False, db: Session
                 story.append(Paragraph(safe_paragraph(f"{chr(65 + option_index)}. {option}"), styles["BodyText"]))
         story.append(Spacer(1, 12))
         if teacher_copy:
-            story.append(Paragraph(safe_paragraph(f"Suggested answer: {q.expected_answer}"), styles["BodyText"]))
-            story.append(Paragraph(safe_paragraph(f"Marking guide: {q.marking_guide}"), styles["BodyText"]))
+            story.append(Paragraph("Expected working / suggested answer", styles["Heading3"]))
+            story.append(Paragraph(safe_paragraph(q.expected_answer or "Teacher to complete the expected answer."), styles["BodyText"]))
+            if q.explanation:
+                story.append(Paragraph(safe_paragraph(f"Explanation: {q.explanation}"), styles["BodyText"]))
+            story.append(Paragraph(safe_paragraph(f"Marking guide: {q.marking_guide or 'Teacher to confirm marking allocation.'}"), styles["BodyText"]))
             story.append(Spacer(1, 8))
     if teacher_copy:
         story.append(PageBreak())
         story.append(Paragraph("Teacher marking information", styles["Heading1"]))
         story.append(Paragraph("This is an AI-assisted draft paper. Check every item and marking allocation before use.", styles["BodyText"]))
-    buf = make_pdf(story, "SASA examination")
-    suffix = "teacher" if teacher_copy else "student"
+    buf = make_pdf(story, f"SASA {paper_label}")
+    suffix = "teacher-working" if teacher_copy else "student"
     return StreamingResponse(buf, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="sasa-exam-{exam.id[:8]}-{suffix}.pdf"'})
+        headers={"Content-Disposition": f'attachment; filename="sasa-{paper_label.lower()}-{exam.id[:8]}-{suffix}.pdf"'})

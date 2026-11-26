@@ -59,6 +59,9 @@ class Question(Base):
     options_json: Mapped[str] = mapped_column(Text, default="[]")
     explanation: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # Set when a teacher deletes a question that is still printed in a saved paper. The row is kept
+    # only so that paper keeps its content; it is hidden everywhere else.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     grade = relationship("Grade")
     subject = relationship("Subject")
     topic = relationship("Topic")
@@ -81,6 +84,7 @@ class Examination(Base):
     subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id"), index=True)
     duration_minutes: Mapped[int] = mapped_column(Integer)
     total_marks: Mapped[float] = mapped_column(Float)
+    paper_type: Mapped[str] = mapped_column(String(30), default="examination")
     status: Mapped[str] = mapped_column(String(30), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     grade = relationship("Grade")

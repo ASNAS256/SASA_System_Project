@@ -16,6 +16,7 @@ class GenerateRequest(BaseModel):
     question_type: Literal["multiple_choice", "short_answer", "structured", "essay", "practical", "scenario", "mixed"] = "mixed"
     bloom_level: BloomLevel | Literal["mixed"] = "mixed"
     include_answers: bool = True
+    use_documents: bool = True  # ground generation in uploaded lesson notes / documents (RAG)
     context: str = "Use familiar Ugandan contexts where appropriate."
 
 class ApproveRequest(BaseModel):
@@ -32,3 +33,12 @@ class BuildExaminationRequest(BaseModel):
     topic_names: list[str] = Field(default_factory=list)
     difficulty: Literal["any", "easy", "moderate", "challenging"] = "any"
     bloom_levels: list[BloomLevel] = Field(default_factory=list)
+
+
+class BuildSelectedAssessmentRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=255)
+    grade_code: str
+    subject_name: str
+    duration_minutes: int = Field(default=60, ge=5, le=600)
+    assessment_type: Literal["activity", "examination"] = "activity"
+    question_ids: list[str] = Field(min_length=1, max_length=100)
