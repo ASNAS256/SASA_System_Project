@@ -1,42 +1,34 @@
-Help me install this Exam question generator system step by step  located at https://github.com/alexanderwendt/exam-question-generator.git. I have already cloned it to my Desktop.
-Setup
-Create a python environment with the following modules
+backend 
+PS C:\WINDOWS\system32> cd C:\SASA-EduAssess\backend
+PS C:\SASA-EduAssess\backend> .\venv\Scripts\activate
+(venv) PS C:\SASA-EduAssess\backend> python -c "import sqlalchemy; print('SQLAlchemy:', sqlalchemy.__version__)"
+SQLAlchemy: 2.1.6
+(venv) PS C:\SASA-EduAssess\backend> python -m app.seed
+Starter curriculum seeded successfully.
+(venv) PS C:\SASA-EduAssess\backend> Copy-Item .env.example .env
+(venv) PS C:\SASA-EduAssess\backend> python -m app.seed
+Starter curriculum seeded successfully.
+(venv) PS C:\SASA-EduAssess\backend> uvicorn app.main:app --reload
+←[32mINFO←[0m:     Will watch for changes in these directories: ['C:\\SASA-EduAssess\\backend']
+←[32mINFO←[0m:     Uvicorn running on ←[1mhttp://127.0.0.1:8000←[0m (Press CTRL+C to quit)
+←[32mINFO←[0m:     Started reloader process [←[36m←[1m5448←[0m] using ←[36m←[1mWatchFiles←[0m
+←[32mINFO←[0m:     Started server process [←[36m10948←[0m]
+←[32mINFO←[0m:     Waiting for application startup.
+←[32mINFO←[0m:     Application startup complete.
+←[32mINFO←[0m:     127.0.0.1:62123 - "←[1mGET /docs?utm_source=chatgpt.com HTTP/1.1←[0m" ←[32m200 OK←[0m
+←[32mINFO←[0m:     127.0.0.1:62123 - "←[1mGET /openapi.json HTTP/1.1←[0m" ←[32m200 OK←[0m
+←[32mINFO←[0m:     127.0.0.1:64609 - "←[1mGET /api/v1/curriculum/grades HTTP/1.1←[0m" ←[32m200 OK←[0m
 
-conda create --name examextractor python=3.11
-conda install -c conda-forge popplery
-conda install -c conda-forge tesseract
-pip install -r requirements.txt
+frontend
+PS C:\WINDOWS\system32> cd C:\SASA-EduAssess\frontend
+PS C:\SASA-EduAssess\frontend> npm install
+PS C:\SASA-EduAssess\frontend> Copy-Item .env.local.example .env.local
+PS C:\SASA-EduAssess\frontend> npm run dev
 
-The libraries popplery  and tesseract are used to recognize words in images and PDFs.
-
-Rename env.example to .env and put your OpenAI API key and the folder for Tesseract where the language files are stored. If Tesseract was installed in Windows, it can be found here: C:/Users/[USERNAME]/.conda/envs/examextractor/share/tessdata
-
-How to run
-Put your documents (pdf, text, images) into the ./resources folder. These documents will be your exam base
-
-Start the program. The program has a main.py with two parameters:
-
--l: if set, it loads the previously stored database instead of creating a new database from the documents in the resource folder
--q: used when debugging to set an initial query that will trigger an answer from the chatbot
-To run, type the following streamlit run ./main.py
-
-The database will be recreated with the documents in ./resources
-
-To use an already loaded database instead of reading new documents, run in console with streamlit run ./main.py -- -l
-
-Models
-For the FAISS vector store per default, the model EMBEDDINGSMODEL = "text-embedding-3-large" is set
-
-For the chatbot, the model AIMODEL = "gpt-3.5-turbo" is used
-
-Sources
-Guides for creating the chatbot
-
-https://python.langchain.com/docs/modules/data_connection/document_loaders/pdf/
-https://medium.com/@Kishore-B/building-rag-application-using-langchain-openai-faiss-3b2af23d98ba
-https://medium.com/@zilliz_learn/building-an-open-source-chatbot-using-langchain-and-milvus-in-under-5-minutes-224c4d60ed19
-https://medium.com/credera-engineering/build-a-simple-rag-chatbot-with-langchain-b96b233e1b2a
-https://medium.com/@gokulprasath100702/exploring-image-to-text-to-story-an-excursion-with-langchain-0546a067dcb1
-
-I have APIs for Open AI and Deepseek
-
+git init
+git remote set-url origin https://github.com/ASNAS256/SASA_System_Project.git
+git add .
+git commit -m "Prepare SASA EduAssess v0.3 for deployment"
+git branch -M main
+git remote add origin https://github.com/ASNAS256/SASA_System_Project.git
+git push -u origin main

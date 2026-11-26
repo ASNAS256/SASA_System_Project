@@ -1,33 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-venv/
-.venv/
-*.db
-*.sqlite3
 
-# Secrets
+# Dependencies and build outputs
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/build/
+**/__pycache__/
+**/.venv/
+**/venv/
+
+# Local databases and uploaded files
+*.db
+*.sqlite
+*.sqlite3
+*.pdf
+
+# Environment secrets
 .env
 .env.*
 !.env.example
 !.env.local.example
-
-# Node / Next
-node_modules/
-.next/
-out/
-*.log
-
-# OS / editor
-.DS_Store
-Thumbs.db
-.vscode/
-# Uploaded curriculum source files (keep local; do not commit source PDFs)
-backend/storage/curriculum/*
-!backend/storage/curriculum/.gitkeep
-
-# Uploaded lesson notes and generated/user files
-backend/storage/prompt_studio/*
-!backend/storage/prompt_studio/.gitkeep
-backend/storage/curriculum/*
-!backend/storage/curriculum/.gitkeep

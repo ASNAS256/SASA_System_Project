@@ -1,10 +1,11 @@
-# SASA EduAssess Uganda — Version 1.0
+# SASA EduAssess Uganda
 
-Milestone 1.0 adds a curriculum source registry, document text extraction, structured CSV curriculum import, review/verification workflow, and a dedicated Curriculum Content Manager page. It builds on the v0.2 question-generation and examination-paper features.
+> Current technical upgrade package: **v0.5.5 — Landing Page & Activity / Examination Builder**.
+> The technical package label does not change the official product version.
 
-> **v1.0 production-fix notice:** This package removes the embedded API credential and adds a Render deployment scaffold. It is not approved for public deployment yet. The application still needs registration/login, role-based authorization, per-user data isolation and persistent object storage. See [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before deploying.
+Milestone 0.3 adds a curriculum source registry, document text extraction, structured CSV curriculum import, review/verification workflow, and a dedicated Curriculum Content Manager page. It builds on the v0.2 question-generation and examination-paper features.
 
-## Important: what v1.0 does and does not mean
+## Important: what v0.3 does and does not mean
 
 This release is the **curriculum content management and ingestion system**, not a complete pre-populated transcription of every current NCDC syllabus. The P1–S6 class directory and broad subject catalogue are retained. The existing Mathematics starter topics remain unverified examples. No unverified or invented topic is presented as official curriculum content.
 
@@ -25,9 +26,9 @@ Text extraction is a convenience, not curriculum interpretation. Scanned PDFs ma
 - Windows 11
 - Python 3.12 recommended
 - Node.js 20 or later (your existing Node 24 is suitable)
-- Existing v0.1 project and database
+- Existing v0.2 project and database
 
-## Upgrade from v0.1 (Windows PowerShell)
+## Upgrade from v0.2 (Windows PowerShell)
 
 1. Stop backend and frontend with `Ctrl+C`.
 2. Back up `backend\sasa_eduassess.db`, `backend\.env` and `frontend\.env.local`.
@@ -43,7 +44,7 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-The schema additions are additive. `Base.metadata.create_all` creates the new curriculum tables without deleting existing v0.2 questions, examinations or curriculum topics. The seed command remains safe to rerun. On Render, use `python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT` as the start command so the class and subject catalogue is initialized before the API starts.
+The schema additions are additive. `Base.metadata.create_all` creates the new curriculum tables without deleting existing v0.2 questions, examinations or curriculum topics. The seed command remains safe to rerun.
 
 In a second PowerShell window:
 
@@ -128,7 +129,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/curriculum/summary
 ```
 
-Expected health version: `1.0.0`. Initially, the curriculum summary may report zero registered source documents and zero imported curriculum entries. This is expected; the v0.2 seed does not invent or bulk-populate NCDC content.
+Expected health version: `0.3.0`. Initially, the curriculum summary may report zero registered source documents and zero imported curriculum entries. This is expected; the v0.2 seed does not invent or bulk-populate NCDC content.
 
 ## Known limitations and next work
 
@@ -139,3 +140,11 @@ Expected health version: `1.0.0`. Initially, the curriculum summary may report z
 - No external/public deployment or high-stakes exam use until security, permissions, content validation and testing are completed.
 
 Next: collect current official NCDC curriculum documents, build a source inventory, and ingest one level/subject batch at a time. Validate the class/subject applicability, strands, topics, learning outcomes, competencies and page references before marking records verified.
+
+
+## v0.5.5 technical upgrade
+
+The public overview is available at `/`; the existing teacher application is at `/workspace`.
+Teachers can select approved questions and create an Activity or Examination paper, then download
+a student PDF or a teacher PDF containing expected answers/working, explanations where available,
+and marking guidance. See `INSTALL_v0.5.5.md` and `RELEASE_NOTES_v0.5.5.md` for upgrade steps.
