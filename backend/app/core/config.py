@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "SASA EduAssess Uganda"
+    app_name: str = "SASA "
     app_env: str = "development"
     database_url: str = "sqlite:///./sasa_eduassess.db"
 
