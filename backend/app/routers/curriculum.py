@@ -8,12 +8,12 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, case
+from sqlalchemy import select, case, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import (
-    Grade, Subject, Topic, CurriculumDocument, CurriculumNode, LearningOutcome,
+    Grade, Subject, Topic, Question, CurriculumDocument, CurriculumNode, LearningOutcome,
 )
 
 router = APIRouter(prefix="/api/v1/curriculum", tags=["Curriculum content"])
@@ -144,7 +144,78 @@ def _node_dict(n: CurriculumNode, include_outcomes=True):
 @router.get("/documents")
 def list_documents(db: Session = Depends(get_db)):
     rows = db.scalars(select(CurriculumDocument).order_by(CurriculumDocument.created_at.desc())).all()
-    return [_doc_dict(d) for d in rows]
+    entry_counts = dict(db.execute(
+        select(CurriculumNode.document_id, func.count(CurriculumNode.id))
+        .group_by(CurriculumNode.document_id)
+    ).all())
+    topic_counts = dict(db.execute(
+        select(Topic.source_title, func.count(Topic.id))
+        .group_by(Topic.source_title)
+    ).all())
+    question_counts = dict(db.execute(
+        select(Question.curriculum_reference, func.count(Question.id))
+        .where(Question.deleted_at.is_(None))
+        .group_by(Question.curriculum_reference)
+    ).all())
+    result = []
+    for document in rows:
+        item = _doc_dict(document)
+        item["linked_entries"] = int(entry_counts.get(document.id, 0))
+        item["linked_topics"] = int(topic_counts.get(document.title, 0))
+        item["linked_questions"] = sum(
+            int(count) for reference, count in question_counts.items()
+            if document.title.casefold() in (reference or "").casefold()
+        )
+        result.append(item)
+    return result
+
+
+@router.delete("/documents/{document_id}")
+def delete_document(document_id: str, db: Session = Depends(get_db)):
+    """Delete only an unused source document; never cascade-delete curriculum content."""
+    doc = db.get(CurriculumDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Curriculum document not found.")
+
+    linked_entries = db.scalar(
+        select(func.count(CurriculumNode.id)).where(CurriculumNode.document_id == doc.id)
+    ) or 0
+    linked_topics = db.scalar(
+        select(func.count(Topic.id)).where(Topic.source_title == doc.title)
+    ) or 0
+    linked_questions = db.scalar(
+        select(func.count(Question.id)).where(Question.curriculum_reference.ilike(f"%{doc.title}%"), Question.deleted_at.is_(None))
+    ) or 0
+    if linked_entries or linked_topics or linked_questions:
+        details = []
+        if linked_entries:
+            details.append(f"{linked_entries} linked curriculum entr{'y' if linked_entries == 1 else 'ies'}")
+        if linked_topics:
+            details.append(f"{linked_topics} topic record{'s' if linked_topics != 1 else ''} carrying this source title")
+        if linked_questions:
+            details.append(f"{linked_questions} generated question record{'s' if linked_questions != 1 else ''} referencing this title")
+        raise HTTPException(
+            409,
+            "This document is still referenced by " + " and ".join(details) +
+            ". Remove or reassign those curriculum references first. "
+            "The document and its content were not changed."
+        )
+
+    stored_name = Path(doc.stored_filename or "").name
+    stored_path = STORAGE_DIR / stored_name if stored_name else None
+
+    db.delete(doc)
+    db.commit()
+
+    # Remove the stored source file only after the database deletion succeeds.
+    if stored_path and stored_path.parent == STORAGE_DIR and stored_path.is_file():
+        try:
+            stored_path.unlink()
+        except OSError:
+            # The database record is gone; a leftover file can be cleaned up manually.
+            pass
+
+    return {"message": "Unused curriculum source document deleted.", "document_id": document_id}
 
 
 @router.post("/documents/upload")

@@ -11,6 +11,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.services.rag import (
+    extract_text as _extract_text, split_chunks as _split_chunks, tokens as _tokens,
+    same_subject as _same_subject, retrieve as _retrieve, DOCUMENT_SOURCE_TYPES,
+)
+from app.services.prompt_intent import resolve_generation_settings, MAX_QUESTIONS
+from app.services.question_utils import (
+    normalise_options, normalise_type, normalise_difficulty, normalise_bloom, normalise_marks, find_legacy_topic,
+)
 from app.services.ai_client import get_ai_client, get_ai_model, get_ai_provider, is_ai_configured
 from app.database import get_db
 from app.models import (
@@ -36,148 +44,17 @@ class SessionCreate(BaseModel):
 class MessageCreate(BaseModel):
     prompt: str = Field(min_length=2, max_length=12000)
     mode: str = Field(default="ask", pattern="^(ask|questions)$")
-    number_of_questions: int = Field(default=5, ge=1, le=20)
-    difficulty: str = Field(default="moderate", pattern="^(easy|moderate|challenging|mixed)$")
-    question_type: str = Field(default="mixed", pattern="^(multiple_choice|short_answer|structured|essay|practical|scenario|mixed)$")
-    bloom_level: str = Field(default="mixed", pattern="^(remember|understand|apply|analyse|evaluate|create|mixed)$")
+    # These four are only DEFAULTS typed/selected in the form. Anything the teacher states in the
+    # prompt text itself overrides them (see services/prompt_intent.py). None = teacher set nothing.
+    number_of_questions: int | None = Field(default=None, ge=1, le=MAX_QUESTIONS)
+    difficulty: str | None = Field(default=None, pattern="^(easy|moderate|challenging|mixed)$")
+    question_type: str | None = Field(default=None, pattern="^(multiple_choice|short_answer|structured|essay|practical|scenario|mixed)$")
+    bloom_level: str | None = Field(default=None, pattern="^(remember|understand|apply|analyse|evaluate|create|mixed)$")
 
 
 class SendDrafts(BaseModel):
     draft_ids: list[str] = Field(min_length=1, max_length=100)
     reviewer_name: str = Field(default="Teacher", max_length=150)
-
-
-def _extract_text(filename: str, content: bytes) -> tuple[str, str]:
-    ext = Path(filename).suffix.lower()
-    if ext in {".txt", ".md"}:
-        return content.decode("utf-8-sig", errors="replace"), "extracted"
-    if ext == ".pdf":
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(content))
-            parts = [f"\n\n[PAGE {i}]\n{page.extract_text() or ''}" for i, page in enumerate(reader.pages, 1)]
-            value = "".join(parts).strip()
-            return value, "extracted" if value else "no_text_found"
-        except Exception as exc:
-            return f"Extraction failed: {exc}", "failed"
-    if ext == ".docx":
-        try:
-            from docx import Document
-            doc = Document(io.BytesIO(content))
-            parts = [p.text for p in doc.paragraphs if p.text.strip()]
-            for table in doc.tables:
-                for row in table.rows:
-                    parts.append(" | ".join(cell.text.strip() for cell in row.cells))
-            value = "\n".join(parts)
-            return value, "extracted" if value else "no_text_found"
-        except Exception as exc:
-            return f"Extraction failed: {exc}", "failed"
-    return "", "unsupported"
-
-
-def _split_chunks(text: str, size: int = 1400, overlap: int = 180):
-    text = re.sub(r"[ \t]+", " ", text or "").strip()
-    if not text:
-        return []
-    chunks, start = [], 0
-    while start < len(text):
-        end = min(len(text), start + size)
-        if end < len(text):
-            boundary = max(text.rfind("\n", start, end), text.rfind(". ", start, end))
-            if boundary > start + size // 2:
-                end = boundary + 1
-        chunk = text[start:end].strip()
-        if chunk:
-            page = ""
-            match = re.search(r"\[PAGE\s+(\d+)\]", chunk, re.I)
-            if match:
-                page = f"Page {match.group(1)}"
-            chunks.append((chunk, page))
-        if end >= len(text):
-            break
-        start = max(start + 1, end - overlap)
-    return chunks
-
-
-def _tokens(value: str):
-    words = {w for w in re.findall(r"[a-zA-Z0-9']+", (value or "").casefold()) if len(w) > 2}
-    # Small deterministic normalisation handles common English plurals and
-    # inflections without requiring an additional NLP dependency.
-    normalised = set()
-    for word in words:
-        token = word
-        if len(token) > 5 and token.endswith("ies"):
-            token = token[:-3] + "y"
-        elif len(token) > 4 and token.endswith("es"):
-            token = token[:-2]
-        elif len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
-            token = token[:-1]
-        elif len(token) > 6 and token.endswith("ing"):
-            token = token[:-3]
-        elif len(token) > 5 and token.endswith("ed"):
-            token = token[:-2]
-        normalised.add(token)
-    return normalised
-
-
-def _same_subject(left: str, right: str) -> bool:
-    normalise = lambda value: " ".join((value or "").casefold().replace("&", "and").split())
-    a, b = normalise(left), normalise(right)
-    return a == b or {a, b} == {"english", "english language"}
-
-
-def _retrieve(db: Session, query: str, limit: int = 7):
-    qtokens = _tokens(query)
-    if not qtokens:
-        return []
-    candidates = []
-    docs = db.scalars(select(PromptStudioDocument).where(
-        PromptStudioDocument.extraction_status == "extracted"
-    ).order_by(PromptStudioDocument.created_at.desc())).all()
-    for doc in docs:
-        for chunk in doc.chunks:
-            words = _tokens(chunk.content)
-            overlap = len(qtokens & words)
-            title_overlap = len(qtokens & _tokens(doc.title))
-            if overlap or title_overlap:
-                score = overlap / max(1, len(qtokens)) + (0.18 * title_overlap)
-                candidates.append((score, {
-                    "document_id": doc.id, "title": doc.title, "page_reference": chunk.page_reference,
-                    "content": chunk.content[:2600], "source_type": doc.source_type,
-                }))
-    # Verified NCDC source documents are also part of the retrieval corpus.
-    verified_docs = db.scalars(select(CurriculumDocument).where(
-        CurriculumDocument.verification_status == "verified",
-        CurriculumDocument.extraction_status == "extracted",
-    )).all()
-    for doc in verified_docs:
-        for index, (content, page) in enumerate(_split_chunks(doc.extracted_text, 1200, 120)):
-            overlap = len(qtokens & _tokens(content))
-            if overlap:
-                score = overlap / max(1, len(qtokens)) + 0.08
-                candidates.append((score, {
-                    "document_id": doc.id, "title": doc.title, "page_reference": page or f"Extract {index+1}",
-                    "content": content[:2400], "source_type": "verified_curriculum",
-                }))
-    if not candidates and re.search(r"\\b(notes?|uploaded|lesson|documents?|materials?|files?)\\b", query, re.I):
-        for doc in docs[:3]:
-            for chunk in doc.chunks[:2]:
-                candidates.append((0.01, {
-                    "document_id": doc.id, "title": doc.title, "page_reference": chunk.page_reference,
-                    "content": chunk.content[:2600], "source_type": doc.source_type,
-                }))
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    seen, result = set(), []
-    for score, item in candidates:
-        key = (item["document_id"], item["page_reference"], item["content"][:100])
-        if key in seen:
-            continue
-        seen.add(key)
-        item["score"] = round(score, 4)
-        result.append(item)
-        if len(result) >= limit:
-            break
-    return result
 
 
 def _message_dict(m):
@@ -223,18 +100,19 @@ def list_documents(db: Session = Depends(get_db)):
 
 
 @router.post("/documents/upload")
-async def upload_note(file: UploadFile = File(...), title: str = Form(""), db: Session = Depends(get_db)):
+async def upload_note(file: UploadFile = File(...), title: str = Form(""), source_type: str = Form("lesson_note"), db: Session = Depends(get_db)):
     original = Path(file.filename or "lesson-note").name
     ext = Path(original).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(415, "Upload PDF, DOCX, TXT or Markdown lesson notes.")
+    source_type = source_type if source_type in DOCUMENT_SOURCE_TYPES else "lesson_note"
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File exceeds the 20 MB upload limit.")
     digest = hashlib.sha256(content).hexdigest()
     existing = db.scalar(select(PromptStudioDocument).where(PromptStudioDocument.sha256 == digest))
     if existing:
-        return {"message": "This file is already available in the Prompt Studio knowledge base.",
+        return {"message": "This file is already available in the SASA knowledge base.",
                 "document": {"id": existing.id, "title": existing.title, "extraction_status": existing.extraction_status}}
     extracted, status = _extract_text(original, content)
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,7 +121,7 @@ async def upload_note(file: UploadFile = File(...), title: str = Form(""), db: S
     doc = PromptStudioDocument(
         title=(title.strip() or Path(original).stem)[:255], original_filename=original[:255],
         stored_filename=stored, sha256=digest, extracted_text=extracted,
-        extraction_status=status, source_type="lesson_note",
+        extraction_status=status, source_type=source_type,
     )
     db.add(doc)
     db.flush()
@@ -340,6 +218,13 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
             "document": doc.title if doc else "", "page": node.page_reference,
             "verified_outcomes": [o.outcome_text for o in outcomes],
         }, ensure_ascii=False)
+    # The prompt text decides; the form values are only fallbacks for whatever the prompt leaves unsaid.
+    resolved = resolve_generation_settings(payload.prompt, {
+        "number_of_questions": payload.number_of_questions, "difficulty": payload.difficulty,
+        "question_type": payload.question_type, "bloom_level": payload.bloom_level,
+    })
+    settings_used, origin = resolved["values"], resolved["origin"]
+    want_count = settings_used["number_of_questions"]
     retrieval_query = " ".join([payload.prompt, session.grade_code, session.subject_name, session.topic_name])
     sources = _retrieve(db, retrieval_query)
     evidence = "\n\n".join(
@@ -366,8 +251,12 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
         f"EXISTING UNAPPROVED DRAFTS AVAILABLE FOR FOLLOW-UP REFINEMENT:\n"
         f"{json.dumps(draft_context, ensure_ascii=False)}\n\n"
         f"TEACHER REQUEST:\n{payload.prompt}\n\n"
-        f"MODE: {payload.mode}. If mode is questions, generate exactly {payload.number_of_questions} draft questions. "
-        f"Difficulty: {payload.difficulty}; question type: {payload.question_type}; Bloom level: {payload.bloom_level}."
+        f"MODE: {payload.mode}. If mode is questions, generate exactly {want_count} draft questions. "
+        f"Difficulty: {settings_used['difficulty']}; question type: {settings_used['question_type']}; "
+        f"Bloom level: {settings_used['bloom_level']}.\n"
+        "These settings already reflect the teacher's own wording in TEACHER REQUEST wherever the request states a "
+        "number, difficulty, question format or Bloom level; the request text always takes priority over form defaults. "
+        "If the request asks for something different from these settings, follow the request."
     )
     system = (
         "You are SASA, an AI teaching assistant for Ugandan educators. Help teachers prepare, explore and refine "
@@ -392,8 +281,15 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
         data = json.loads(raw or "{}")
         answer = str(data.get("answer") or "").strip()
         generated = data.get("questions") or []
-        if payload.mode == "questions" and len(generated) != payload.number_of_questions:
-            raise ValueError(f"AI returned {len(generated)} questions; {payload.number_of_questions} were requested.")
+        if not isinstance(generated, list):
+            generated = []
+        if payload.mode == "questions":
+            if not generated:
+                raise ValueError("The AI returned no questions. Please try again.")
+            generated = generated[:want_count]  # never save more than were asked for
+            if len(generated) < want_count:
+                answer = (answer + f"\n\nNote: {len(generated)} of the {want_count} requested questions were produced. "
+                          "Send the request again, or ask for the remaining questions as a follow-up.").strip()
     except Exception as exc:
         raise HTTPException(502, f"Prompt Studio request failed: {str(exc)}")
     user_message = PromptMessage(session_id=session.id, role="user", content=payload.prompt)
@@ -408,24 +304,25 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
     for item in generated:
         try:
             question_text = str(item.get("question_text", "")).strip()
-            marks = float(item.get("marks", 1))
-            if len(question_text) < 5 or marks <= 0:
+            marks = normalise_marks(item.get("marks", 1))
+            options = normalise_options(item.get("options", []))
+            if len(question_text) < 5:
                 continue
             draft = PromptDraft(
                 session_id=session.id, grade_code=session.grade_code, subject_name=session.subject_name,
                 topic_name=session.topic_name, curriculum_node_id=session.curriculum_node_id,
-                question_text=question_text, question_type=str(item.get("question_type", "structured")),
-                difficulty=str(item.get("difficulty", payload.difficulty)), marks=marks,
+                question_text=question_text, question_type=normalise_type(item.get("question_type"), options),
+                difficulty=normalise_difficulty(item.get("difficulty"), settings_used["difficulty"]), marks=marks,
                 expected_answer=str(item.get("expected_answer", "")), marking_guide=str(item.get("marking_guide", "")),
-                bloom_level=str(item.get("bloom_level", "understand")),
+                bloom_level=normalise_bloom(item.get("bloom_level")),
                 learning_outcome=next((v for v in verified_outcome_texts
                                        if v.strip().casefold() == str(item.get("learning_outcome", "")).strip().casefold()), ""),
-                options_json=json.dumps(item.get("options", [])), explanation=str(item.get("explanation", "")),
+                options_json=json.dumps(options), explanation=str(item.get("explanation", "")),
                 source_references_json=json.dumps([{"title": s["title"], "page_reference": s["page_reference"]} for s in sources]),
             )
             db.add(draft)
             saved_drafts.append(draft)
-        except (TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError):
             continue
     session.updated_at = datetime.now(timezone.utc)
     if not session.title or session.title == "New prompt session":
@@ -434,6 +331,7 @@ def send_message(session_id: str, payload: MessageCreate, db: Session = Depends(
     for draft in saved_drafts:
         db.refresh(draft)
     return {"answer": answer, "provider": provider,
+            "applied_settings": {**settings_used, "origin": origin},
             "sources": assistant_message.sources_json and json.loads(assistant_message.sources_json),
             "drafts": [_draft_dict(d) for d in saved_drafts]}
 
@@ -450,8 +348,8 @@ def send_drafts_to_bank(session_id: str, payload: SendDrafts, db: Session = Depe
         raise HTTPException(404, "One or more selected drafts were not found in this session.")
     added = []
     for draft in drafts:
-        if draft.status == "added_to_bank":
-            continue
+        if draft.status != "draft":
+            continue  # already in the bank, or its bank question was later deleted by the teacher
         grade = db.scalar(select(Grade).where(Grade.code == draft.grade_code.upper()))
         subject = db.scalar(select(Subject).where(Subject.name == draft.subject_name))
         if not subject:
@@ -459,15 +357,23 @@ def send_drafts_to_bank(session_id: str, payload: SendDrafts, db: Session = Depe
                             if _same_subject(candidate.name, draft.subject_name)), None)
         if not grade or not subject:
             raise HTTPException(422, f"Class or subject not found for draft {draft.id}. Set these in the session before generating.")
+        # Store the question in the exact shape the Teacher Workspace activity / paper builders expect:
+        # standard type/difficulty/Bloom values, clean options, and a topic link where one exists.
+        options = normalise_options(json.loads(draft.options_json or "[]"))
+        legacy_topic = find_legacy_topic(db, grade.id, [s.id for s in db.scalars(select(Subject)).all()
+                                                          if _same_subject(s.name, subject.name)], draft.topic_name)
+        source_titles = "; ".join(dict.fromkeys(s.get("title", "") for s in json.loads(draft.source_references_json or "[]") if s.get("title")))
         q = Question(
-            grade_id=grade.id, subject_id=subject.id, curriculum_node_id=draft.curriculum_node_id,
-            question_text=draft.question_text, question_type=draft.question_type,
-            difficulty=draft.difficulty, marks=draft.marks, expected_answer=draft.expected_answer,
-            marking_guide=draft.marking_guide, curriculum_reference="AI Prompt Studio; retrieved sources: " +
-                "; ".join(s.get("title", "") for s in json.loads(draft.source_references_json or "[]")),
+            grade_id=grade.id, subject_id=subject.id, topic_id=legacy_topic.id if legacy_topic else None,
+            curriculum_node_id=draft.curriculum_node_id,
+            question_text=draft.question_text, question_type=normalise_type(draft.question_type, options),
+            difficulty=normalise_difficulty(draft.difficulty), marks=normalise_marks(draft.marks),
+            expected_answer=draft.expected_answer, marking_guide=draft.marking_guide,
+            curriculum_reference=(f"Subject: {subject.name} | Topic: {draft.topic_name or 'Not specified'} | "
+                                  f"AI Prompt Studio; retrieved sources: {source_titles or 'none'}"),
             source="ai_rag", moderation_category="Curriculum" if draft.curriculum_node_id else "Supplementary",
-            approval_status="approved", bloom_level=draft.bloom_level, learning_outcome=draft.learning_outcome,
-            options_json=draft.options_json, explanation=draft.explanation,
+            approval_status="approved", bloom_level=normalise_bloom(draft.bloom_level), learning_outcome=draft.learning_outcome,
+            options_json=json.dumps(options), explanation=draft.explanation,
         )
         db.add(q)
         db.flush()
