@@ -16,17 +16,20 @@ export default function PromptStudio(){
  const [topics,setTopics]=useState<Topic[]>([]),[documents,setDocuments]=useState<Doc[]>([]);
  const [sessions,setSessions]=useState<Session[]>([]);
  const [session,setSession]=useState<Session|null>(null);
- const [grade,setGrade]=useState("P6"),[subject,setSubject]=useState("Mathematics"),[topic,setTopic]=useState("");
+ const [grade,setGrade]=useState("S3"),[subject,setSubject]=useState("Biology"),[topic,setTopic]=useState("");
  const [prompt,setPrompt]=useState("Create a lesson activity and assessment questions based on the lesson notes I upload. Use clear instructions and age-appropriate Ugandan examples.");
  const [mode,setMode]=useState<"ask"|"questions">("questions");
- const [count,setCount]=useState(5),[difficulty,setDifficulty]=useState("moderate"),[kind,setKind]=useState("mixed"),[bloom,setBloom]=useState("mixed");
- const [file,setFile]=useState<File|null>(null),[fileTitle,setFileTitle]=useState("");
+ const [countText,setCountText]=useState(""),[difficulty,setDifficulty]=useState("moderate"),[kind,setKind]=useState("mixed"),[bloom,setBloom]=useState("mixed");
+ const [file,setFile]=useState<File|null>(null),[fileTitle,setFileTitle]=useState(""),[docType,setDocType]=useState("lesson_note");
+ const RECENT_DOCS=3;
  const [selectedDrafts,setSelectedDrafts]=useState<string[]>([]);
  const [busy,setBusy]=useState(false),[notice,setNotice]=useState(""),[error,setError]=useState("");
  const selectedTopic=topics.find(t=>t.id===topic);
  const drafts=session?.drafts||[];
  const pendingDrafts=drafts.filter(d=>d.status==="draft");
  const addedCount=drafts.filter(d=>d.status==="added_to_bank").length;
+ const recentDocuments=documents.slice(0,RECENT_DOCS),hiddenDocuments=Math.max(0,documents.length-RECENT_DOCS);
+ const parsedCount=countText.trim()===""?undefined:Math.max(1,Math.min(50,Math.round(Number(countText))||1));
 
  async function refreshDocuments(){const r=await fetch(`${API}/api/v1/prompt-studio/documents`);if(r.ok)setDocuments(await r.json())}
  async function refreshSessions(){const r=await fetch(`${API}/api/v1/prompt-studio/sessions`);if(r.ok)setSessions(await r.json())}
@@ -44,7 +47,7 @@ export default function PromptStudio(){
   if(!file){setError("Choose a lesson note first.");return}
   setBusy(true);setError("");setNotice("");
   try{
-   const form=new FormData();form.append("file",file);form.append("title",fileTitle);
+   const form=new FormData();form.append("file",file);form.append("title",fileTitle);form.append("source_type",docType);
    const r=await fetch(`${API}/api/v1/prompt-studio/documents/upload`,{method:"POST",body:form});
    const d=await r.json();if(!r.ok)throw Error(d.detail||"Upload failed");
    setNotice(d.message);setFile(null);setFileTitle("");await refreshDocuments();
@@ -70,16 +73,9 @@ export default function PromptStudio(){
   }catch(e){setError(e instanceof Error?e.message:"Could not delete conversation")}finally{setBusy(false)}
  }
  async function ensureSession(){
-  const context={grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null};
-  if(session){
-   // Persist the current selectors before sending. This also repairs older
-   // sessions that were created before a class/subject was selected.
-   const r=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/context`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(context)});
-   const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not update session class and subject");
-   setSession(old=>old?{...old,...d}:d);await refreshSessions();return {...session,...d} as Session;
-  }
+  if(session)return session;
   const r=await fetch(`${API}/api/v1/prompt-studio/sessions`,{method:"POST",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({title:"New prompt session",...context})});
+   body:JSON.stringify({title:"New prompt session",grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null})});
   const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not start session");
   setSession(d);await refreshSessions();return d as Session;
  }
@@ -89,11 +85,12 @@ export default function PromptStudio(){
   try{
    const active=await ensureSession();
    const r=await fetch(`${API}/api/v1/prompt-studio/sessions/${active.id}/messages`,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({prompt:prompt.trim(),mode,number_of_questions:count,difficulty,question_type:kind,bloom_level:bloom})});
+    body:JSON.stringify({prompt:prompt.trim(),mode,number_of_questions:parsedCount,difficulty,question_type:kind,bloom_level:bloom})});
    const d=await r.json();if(!r.ok)throw Error(d.detail||"Prompt request failed");
    const latest=await fetch(`${API}/api/v1/prompt-studio/sessions/${active.id}`).then(x=>x.json());
    setSession(latest);setPrompt("");setSelectedDrafts([]);
-   setNotice(mode==="questions"?`${d.drafts?.length||0} question draft(s) created. Review and select the items you want to add to your question bank.`:"Response generated. You can send a follow-up prompt to refine or extend it.");
+   const a=d.applied_settings;const fromPrompt=a?Object.entries(a.origin||{}).filter(([,v])=>v==="prompt").map(([k])=>({number_of_questions:"number",difficulty:"difficulty",question_type:"format",bloom_level:"Bloom level"} as Record<string,string>)[k]):[];
+   setNotice(mode==="questions"?`${d.drafts?.length||0} question draft(s) created${fromPrompt.length?` using the ${fromPrompt.join(", ")} you asked for in your prompt`:""}. Review and select the items you want to add to your question bank.`:"Response generated. You can send a follow-up prompt to refine or extend it.");
    await refreshSessions();
   }catch(e){setError(e instanceof Error?e.message:"Prompt request failed")}finally{setBusy(false)}
  }
@@ -101,12 +98,6 @@ export default function PromptStudio(){
   if(!session||!selectedDrafts.length)return;
   setBusy(true);setError("");
   try{
-   // Persist the visible class/subject selectors before approving older drafts.
-   const contextResponse=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/context`,{method:"PATCH",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({grade_code:grade,subject_name:subject,topic_name:selectedTopic?.name||"",curriculum_node_id:topic||null})});
-   const contextData=await contextResponse.json();
-   if(!contextResponse.ok)throw Error(contextData.detail||"Select a valid class and subject before approving drafts");
-   setSession(old=>old?{...old,...contextData}:contextData);
    const r=await fetch(`${API}/api/v1/prompt-studio/sessions/${session.id}/send-to-bank`,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({draft_ids:selectedDrafts,reviewer_name:"Teacher"})});
    const d=await r.json();if(!r.ok)throw Error(d.detail||"Could not add selected drafts");
@@ -118,10 +109,6 @@ export default function PromptStudio(){
  const activeMessages=session?.messages||[];
  if(!hydrated) return <main className="studio-shell" aria-busy="true"><p>Loading SASA Prompt Studio...</p></main>;
  return <div className="studio-shell">
-  <header className="studio-header">
-   <div className="brand"><span className="brand-mark">S</span><div><b>SASA</b><small>AI teaching & assessment studio</small></div></div>
-   <nav><a href="/">Assessment engine</a><a href="/curriculum">Curriculum manager</a></nav>
-  </header>
   <main className="studio-main">
    <div className="studio-intro"><div><span className="eyebrow">TEACHER WORKSPACE · V0.1.0</span><h1>AI Prompt Studio</h1>
     <p>Bring your lesson notes, describe what you need, and work with SASA to create or refine teaching and assessment materials. You decide what enters the question bank.</p></div>
@@ -134,9 +121,11 @@ export default function PromptStudio(){
       <p className="help-text">Upload PDF, Word, text or Markdown notes. SASA extracts and indexes their text for retrieval during your prompt session.</p>
       <label className="upload-drop"><input type="file" accept=".pdf,.docx,.txt,.md" onChange={e=>setFile(e.target.files?.[0]||null)}/><span className="upload-icon">＋</span><b>{file?file.name:"Choose a lesson note"}</b><small>PDF · DOCX · TXT · MD · up to 20 MB</small></label>
       <label>Document title</label><input value={fileTitle} onChange={e=>setFileTitle(e.target.value)} placeholder="e.g. P6 Fractions lesson notes"/>
+      <label>Document type</label><select value={docType} onChange={e=>setDocType(e.target.value)}><option value="lesson_note">Lesson notes</option><option value="scheme_of_work">Scheme of work</option><option value="past_paper">Past paper / sample paper</option><option value="reference_material">Reference material</option><option value="other">Other document</option></select>
       <button className="studio-button primary full" disabled={busy||!file} onClick={upload}>{busy?"Processing…":"Upload and index notes"}</button>
-      <div className="document-list">{documents.map(d=><div className="document-row" key={d.id}><span className="file-icon">▤</span><div><b>{d.title}</b><small>{d.extraction_status==="extracted"?`${d.characters.toLocaleString()} characters · ready for RAG`:`Extraction: ${d.extraction_status}`}</small></div><span className={d.extraction_status==="extracted"?"status-dot ready":"status-dot"} /></div>)}
-       {!documents.length&&<p className="empty-note">No lesson notes uploaded yet. You can still retrieve from verified NCDC documents.</p>}</div>
+      <div className="document-list">{recentDocuments.map(d=><div className="document-row" key={d.id}><span className="file-icon">▤</span><div><b>{d.title}</b><small>{d.extraction_status==="extracted"?`${d.characters.toLocaleString()} characters · ready for RAG`:`Extraction: ${d.extraction_status}`}</small></div><span className={d.extraction_status==="extracted"?"status-dot ready":"status-dot"} /></div>)}
+       {!documents.length&&<p className="empty-note">No lesson notes uploaded yet. You can still retrieve from verified NCDC documents.</p>}
+       {hiddenDocuments>0&&<p className="empty-note">Showing the {RECENT_DOCS} most recent uploads. {hiddenDocuments} older document{hiddenDocuments===1?"":"s"} hidden here but still indexed and used for retrieval.</p>}</div>
      </section>
      <section className="studio-card"><div className="section-heading"><div><span className="eyebrow">CONVERSATIONS</span><h2>Recent sessions</h2></div><button className="icon-button" title="Start a new session" onClick={()=>{setSession(null);setSelectedDrafts([]);setNotice("New session ready. Set the class and subject, then enter your prompt.");}}>＋</button></div>
       <div className="session-list">{sessions.map(s=><div key={s.id} className={`session-row ${session?.id===s.id?"active":""}`}>
@@ -172,19 +161,20 @@ export default function PromptStudio(){
       <div className="composer">
        <div className="composer-mode"><button className={mode==="ask"?"selected":""} onClick={()=>setMode("ask")}>Ask & refine</button><button className={mode==="questions"?"selected":""} onClick={()=>setMode("questions")}>Generate questions</button></div>
        {mode==="questions"&&<div className="generation-options">
-        <div><label>Number</label><select value={count} onChange={e=>setCount(Number(e.target.value))}>{[3,5,10,15,20].map(n=><option key={n}>{n}</option>)}</select></div>
+        <div><label>Number</label><input type="number" min={1} max={50} inputMode="numeric" value={countText} onChange={e=>setCountText(e.target.value)} placeholder="e.g. 8 (default 5)"/></div>
         <div><label>Difficulty</label><select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option value="easy">Easy</option><option value="moderate">Moderate</option><option value="challenging">Challenging</option><option value="mixed">Mixed</option></select></div>
         <div><label>Format</label><select value={kind} onChange={e=>setKind(e.target.value)}><option value="mixed">Mixed</option><option value="multiple_choice">Multiple choice</option><option value="short_answer">Short answer</option><option value="structured">Structured</option><option value="essay">Essay</option><option value="practical">Practical</option><option value="scenario">Scenario</option></select></div>
         <div><label>Bloom level</label><select value={bloom} onChange={e=>setBloom(e.target.value)}><option value="mixed">Mixed</option><option value="remember">Remember</option><option value="understand">Understand</option><option value="apply">Apply</option><option value="analyse">Analyse</option><option value="evaluate">Evaluate</option><option value="create">Create</option></select></div>
+        <p className="help-text generation-defaults-note">These are only defaults. Whatever you state in your prompt (for example “8 easy multiple choice questions at apply level”) takes priority; the number is left blank unless you type one.</p>
        </div>}
        <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Write your prompt… (Enter to send, Shift+Enter for a new line)" rows={4}/>
        <div className="composer-footer"><small>Use follow-up prompts to revise tone, difficulty, format or content. Retrieved extracts are shown with responses.</small><button className="studio-button primary" disabled={busy||prompt.trim().length<2} onClick={send}>{busy?"Working…":mode==="questions"?"Generate drafts →":"Send prompt →"}</button></div>
       </div>
      </section>
-     {drafts.length>0&&<section className="studio-card draft-review"><div className="section-heading"><div><span className="eyebrow">TEACHER REVIEW</span><h2>Generated question drafts</h2><p className="help-text">{pendingDrafts.length} awaiting your decision · {addedCount} added to the question bank</p></div><span className="count-pill">{drafts.length}</span></div>
+     {drafts.length>0&&<section className="studio-card draft-review"><div className="section-heading"><div><span className="eyebrow">TEACHER REVIEW</span><h2>Generated question drafts</h2><p className="help-text">{pendingDrafts.length} awaiting your decision · {addedCount} in the question bank</p></div><span className="count-pill">{drafts.length}</span></div>
       <div className="draft-toolbar"><label className="select-all"><input type="checkbox" checked={pendingDrafts.length>0&&pendingDrafts.every(d=>selectedDrafts.includes(d.id))} onChange={e=>setSelectedDrafts(e.target.checked?pendingDrafts.map(d=>d.id):[])} /> Select all pending</label><button className="studio-button primary" disabled={busy||!selectedDrafts.length} onClick={sendToBank}>Approve & add selected ({selectedDrafts.length})</button></div>
-      {drafts.map((d,i)=><article className={`draft-item ${d.status==="added_to_bank"?"added":""}`} key={d.id}>
-       <div className="draft-head"><label><input type="checkbox" checked={selectedDrafts.includes(d.id)} disabled={d.status!=="draft"} onChange={()=>toggleDraft(d.id)}/><b>Question {i+1}</b></label><span className={d.status==="added_to_bank"?"draft-status added-status":"draft-status"}>{d.status==="added_to_bank"?"In question bank":"Draft · awaiting approval"}</span></div>
+      {drafts.map((d,i)=><article className={`draft-item ${d.status==="added_to_bank"?"added":""}${d.status==="removed_from_bank"?" removed":""}`} key={d.id}>
+       <div className="draft-head"><label><input type="checkbox" checked={selectedDrafts.includes(d.id)} disabled={d.status!=="draft"} onChange={()=>toggleDraft(d.id)}/><b>Question {i+1}</b></label><span className={d.status==="added_to_bank"?"draft-status added-status":"draft-status"}>{d.status==="added_to_bank"?"In question bank":d.status==="removed_from_bank"?"Removed from question bank":"Draft · awaiting approval"}</span></div>
        <p className="draft-question">{d.question_text}</p>
        {d.options?.length>0&&<ol type="A">{d.options.map((o,j)=><li key={j}>{o}</li>)}</ol>}
        <div className="draft-meta"><span>{d.question_type.replaceAll("_"," ")}</span><span>{d.difficulty}</span><span>{d.marks} marks</span><span>{d.bloom_level}</span></div>
