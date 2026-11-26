@@ -142,7 +142,7 @@ Expected health version: `0.3.0`. Initially, the curriculum summary may report z
 Next: collect current official NCDC curriculum documents, build a source inventory, and ingest one level/subject batch at a time. Validate the class/subject applicability, strands, topics, learning outcomes, competencies and page references before marking records verified.
 
 
-## v0.5.5 technical upgrade
+## v0.3 technical upgrade
 
 The public overview is available at `/`; the existing teacher application is at `/workspace`.
 Teachers can select approved questions and create an Activity or Examination paper, then download
